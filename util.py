@@ -5,4 +5,6 @@ zip = lambda x, y: list(old_zip(x, y))
 old_map = map
 map = lambda x, y: list(old_map(x, y))
 
+DEBUG = False
+
 
