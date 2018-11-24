@@ -75,6 +75,31 @@ AlarmGroupId = Union[Tuple, int]
 GroupedAlarms = Tuple[AlarmGroupId, List[pd.DataFrame]]
 AlarmGroups = Tuple[List[GroupedAlarms], List[Tuple[int, AlarmGroupId]]]
 
+CrossValSplit = Tuple[pd.DataFrame, pd.DataFrame]
+
+
+def compute_cross_val_stats(cross_vals: List[CrossValSplit], attrs: List[str]=None):
+    if attrs is None: attrs = ['srid', 'target', 'depth', 'corners']
+    for train, test in cross_vals:
+        train = train.sort_values(attrs, na_position='last')
+        train_gb = train.groupby(attrs, sort=False)
+
+        test = test.sort_values(attrs, na_position='last')
+        test_gb = test.groupby(attrs, sort=False)
+
+        train_gb_size = train_gb.size().to_frame('counts')
+        test_gb_size = test_gb.size().to_frame('counts')
+
+        train_gb_size['counts'] = train_gb_size['counts'].map(lambda x: x/sum(train_gb_size['counts']))
+        test_gb_size['counts'] = test_gb_size['counts'].map(lambda x: x/sum(test_gb_size['counts']))
+
+        for level in train_gb_size.index.levels[0]:
+            for sublevel in train_gb_size.index.levels[1]:
+                for subsublevel in train_gb_size.index.levels[2]:
+                    print('train', level, sublevel, subsublevel, train_gb_size.T[level, sublevel].loc['counts'].values)
+                    print('test', level, sublevel, subsublevel, test_gb_size.T[level, sublevel].loc['counts'].values)
+                    print()
+
 
 def group_alarms_by(alarms: pd.DataFrame,
                     attrs: List[str] = None,
@@ -89,8 +114,6 @@ def group_alarms_by(alarms: pd.DataFrame,
     alarms.sort_values(attrs, inplace=True, na_position='last')
 
     gb = alarms.groupby(attrs, sort=False)
-    print(gb.size())
-    print(len(gb))
     groups = list(gb)
 
     if group_attrs:
@@ -118,13 +141,10 @@ def group_alarms_by(alarms: pd.DataFrame,
     return groups_dfs, dfidxs_groups
 
 
-CrossValSplit = Tuple[pd.DataFrame, pd.DataFrame]
-
-
 def create_cross_val_splits(n_splits: int,
                             cv: BaseCrossValidator,
                             all_alarms: pd.DataFrame,
-                            dfs_groups: List[Tuple[int, int]],
+                            dfs_groups: List[Tuple[int, AlarmGroupId]],
                             groups=None
                             ) -> List[CrossValSplit]:
     group_sizes = Counter(map(itemgetter(1), dfs_groups))
@@ -244,7 +264,7 @@ def visualize_cross_vals(alarms: pd.DataFrame, n_splits=10):
     visualize_groups(false_alarm_dfs_groups, false_alarms)
 
     cvs = [
-        # KFold(n_splits=n_splits),
+        KFold(n_splits=n_splits),
         # GroupKFold(n_splits=n_splits),
         # ShuffleSplit(n_splits=n_splits, test_size=0.5, random_state=0),
         StratifiedKFold(n_splits=n_splits, shuffle=False),
@@ -258,6 +278,9 @@ def visualize_cross_vals(alarms: pd.DataFrame, n_splits=10):
         true_alarm_cross_val_splits = create_cross_val_splits(n_splits, cv, true_alarms, true_alarm_dfs_groups)
         false_alarm_cross_val_splits = create_cross_val_splits(n_splits, cv, false_alarms, false_alarm_dfs_groups)
 
+        # compute_cross_val_stats(true_alarm_cross_val_splits)
+        # compute_cross_val_stats(false_alarm_cross_val_splits, attrs=['srid', 'site'])
+
         cross_val_splits, alarms, groups_dfs, dfs_groups = join_cross_val_splits(
             true_alarm_cross_val_splits, true_alarms, true_alarm_groups_dfs, true_alarm_dfs_groups,
             false_alarm_cross_val_splits, false_alarms, false_alarm_groups_dfs, false_alarm_dfs_groups,
@@ -267,12 +290,10 @@ def visualize_cross_vals(alarms: pd.DataFrame, n_splits=10):
 
 
 root = os.getcwd()
-tuf_table_file_name = 'three_maxs_table.csv'
-tuf_table_file_name = 'medium_maxs_table.csv'
+# tuf_table_file_name = 'small_maxs_table.csv'
+# tuf_table_file_name = 'medium_maxs_table.csv'
 # tuf_table_file_name = 'big_maxs_table.csv'
-# tuf_table_file_name = 'all_maxs.csv'
+tuf_table_file_name = 'all_maxs.csv'
 all_alarms = tuf_table_csv_to_df(os.path.join(root, tuf_table_file_name))
 
 visualize_cross_vals(all_alarms, n_splits=10)
-
-
