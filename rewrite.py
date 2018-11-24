@@ -78,7 +78,7 @@ AlarmGroups = Tuple[List[GroupedAlarms], List[Tuple[int, AlarmGroupId]]]
 CrossValSplit = Tuple[pd.DataFrame, pd.DataFrame]
 
 
-def compute_cross_val_stats(cross_vals: List[CrossValSplit], attrs: List[str]=None):
+def compute_cross_val_stats(cross_vals: List[CrossValSplit], attrs: List[str] = None):
     if attrs is None: attrs = ['srid', 'target', 'depth', 'corners']
     for train, test in cross_vals:
         train = train.sort_values(attrs, na_position='last')
@@ -90,8 +90,8 @@ def compute_cross_val_stats(cross_vals: List[CrossValSplit], attrs: List[str]=No
         train_gb_size = train_gb.size().to_frame('counts')
         test_gb_size = test_gb.size().to_frame('counts')
 
-        train_gb_size['counts'] = train_gb_size['counts'].map(lambda x: x/sum(train_gb_size['counts']))
-        test_gb_size['counts'] = test_gb_size['counts'].map(lambda x: x/sum(test_gb_size['counts']))
+        train_gb_size['counts'] = train_gb_size['counts'].map(lambda x: x / sum(train_gb_size['counts']))
+        test_gb_size['counts'] = test_gb_size['counts'].map(lambda x: x / sum(test_gb_size['counts']))
 
         for level in train_gb_size.index.levels[0]:
             for sublevel in train_gb_size.index.levels[1]:
@@ -219,9 +219,13 @@ def group_false_alarms(all_false_alarms: pd.DataFrame) -> AlarmGroups:
     return groups_dfs, dfidxs_groups
 
 
-def join_cross_val_splits(cv_splits_1: List[CrossValSplit], alarms_1: pd.DataFrame, groups_dfs_1: List[GroupedAlarms],
+def join_cross_val_splits(cv_splits_1: List[CrossValSplit],
+                          alarms_1: pd.DataFrame,
+                          groups_dfs_1: List[GroupedAlarms],
                           dfs_groups_1: List[Tuple[int, AlarmGroupId]],
-                          cv_splits_2: List[CrossValSplit], alarms_2: pd.DataFrame, groups_dfs_2: List[GroupedAlarms],
+                          cv_splits_2: List[CrossValSplit],
+                          alarms_2: pd.DataFrame,
+                          groups_dfs_2: List[GroupedAlarms],
                           dfs_groups_2: List[Tuple[int, AlarmGroupId]]
                           ) -> Tuple[
     List[CrossValSplit], pd.DataFrame, List[GroupedAlarms], List[Tuple[int, AlarmGroupId]]]:
