@@ -1,9 +1,10 @@
 import os
 from collections import defaultdict, Counter
 from operator import itemgetter
-from typing import List, Tuple, Optional, Dict
+from typing import List, Tuple, Optional, Dict, Union
 from sklearn.model_selection import (StratifiedKFold, KFold, GroupKFold, BaseCrossValidator, GroupShuffleSplit,
                                      StratifiedShuffleSplit, ShuffleSplit, RepeatedKFold, RepeatedStratifiedKFold)
+from rtree import index as r_index
 import h5py
 import numpy as np
 import pandas as pd
@@ -42,6 +43,7 @@ class AlarmDataset(Dataset):
 
 def tuf_table_csv_to_df(fp) -> pd.DataFrame:
     df = pd.read_csv(fp)
+
     df = df.where((pd.notnull(df)), None)
 
     def corners_to_tuple(corners: pd.DataFrame) -> Optional[List[Tuple]]:
@@ -53,10 +55,12 @@ def tuf_table_csv_to_df(fp) -> pd.DataFrame:
     corners_names = filter(lambda x: 'corner' in x, df.columns)
     df['corners'] = df[corners_names].apply(corners_to_tuple, axis=1)
     df.drop(corners_names, inplace=True, axis=1)
+    df['utm'] = df[['xUTM', 'yUTM']].apply(lambda u: (u.xUTM, u.yUTM), axis=1)
+    df.drop(['xUTM', 'yUTM'], inplace=True, axis=1)
 
     df.drop(
         [
-            'xUTM', 'yUTM', 'sensor_type', 'dt', 'ch', 'scan', 'time', 'MineIsInsideLane', 'DIST', 'objectdist',
+            'sensor_type', 'dt', 'ch', 'scan', 'time', 'MineIsInsideLane', 'DIST', 'objectdist',
             'category', 'isDetected', 'IsInsideLane', 'prescreener', 'known_obj', 'event_type', 'id', 'lsd_kv',
             'encoder', 'event_timestamp', 'fold'
         ],
@@ -67,24 +71,27 @@ def tuf_table_csv_to_df(fp) -> pd.DataFrame:
     return df
 
 
-def group_alarms_by(
-        all_alarms: pd.DataFrame,
-        attrs: List[str] = None,
-        group_attrs: List[str] = None
-) -> Tuple[List[Tuple[int, pd.DataFrame]], List[Tuple[int, int]]]:
+AlarmGroupId = Union[Tuple, int]
+GroupedAlarms = Tuple[AlarmGroupId, List[pd.DataFrame]]
+AlarmGroups = Tuple[List[GroupedAlarms], List[Tuple[int, AlarmGroupId]]]
+
+
+def group_alarms_by(alarms: pd.DataFrame,
+                    attrs: List[str] = None,
+                    group_attrs: List[str] = None
+                    ) -> AlarmGroups:
     if attrs is None: attrs = ['srid', 'target', 'depth', 'corners']
 
     if group_attrs:
-        assert set(group_attrs) < set(attrs)
+        assert set(group_attrs) <= set(attrs)
     group_idx_attr_map = {attr: i for i, attr in enumerate(attrs)}
 
-    all_alarms.sort_values(attrs, inplace=True, na_position='last')
-    all_alarms.reset_index(inplace=True)
+    alarms.sort_values(attrs, inplace=True, na_position='last')
 
-    gb = all_alarms.dropna(subset=['corners']).groupby(attrs, sort=False)
+    gb = alarms.groupby(attrs, sort=False)
     print(gb.size())
+    print(len(gb))
     groups = list(gb)
-    misses = all_alarms[all_alarms['HIT'] == 0]
 
     if group_attrs:
         group_df_map = defaultdict(list)
@@ -96,29 +103,30 @@ def group_alarms_by(
 
             group_df_map[group_id].append(group)
         groups_dfs = list(group_df_map.items())
-        groups_dfs.append((('miss',) * len(group_id), np.split(misses, len(misses))))
-    else:
-        groups_dfs = [(group, [all_alarms]) for group, (_, all_alarms) in enumerate(groups)]
-        groups_dfs.append((len(groups_dfs), np.split(misses, len(misses))))
 
-    dfidx_groups = []
-    for group, dfs in groups_dfs:
+    else:
+        groups_dfs = [(groupid, [alarms]) for groupid, (_, alarms) in enumerate(groups)]
+
+    dfidxs_groups = []
+    for groupid, dfs in groups_dfs:
         for df in dfs:
-            dfidx_groups.extend([(idx, group) for idx in df.index])
+            dfidxs_groups.extend([(idx, groupid) for idx in df.index])
 
     if DEBUG:
-        all_alarms['corners'] = all_alarms['corners'].map(list, na_action='ignore')
+        alarms['corners'] = alarms['corners'].map(list, na_action='ignore')
 
-    return groups_dfs, dfidx_groups
+    return groups_dfs, dfidxs_groups
 
 
-def create_cross_val_splits(
-        n_splits: int,
-        cv: BaseCrossValidator,
-        all_alarms: pd.DataFrame,
-        dfs_groups: List[Tuple[int, int]],
-        groups=None,
-) -> List[Tuple[pd.DataFrame, pd.DataFrame]]:
+CrossValSplit = Tuple[pd.DataFrame, pd.DataFrame]
+
+
+def create_cross_val_splits(n_splits: int,
+                            cv: BaseCrossValidator,
+                            all_alarms: pd.DataFrame,
+                            dfs_groups: List[Tuple[int, int]],
+                            groups=None
+                            ) -> List[CrossValSplit]:
     group_sizes = Counter(map(itemgetter(1), dfs_groups))
     # if number of instances/grouping is less than the number of folds then you can't distribute across the folds evenly
 
@@ -159,10 +167,6 @@ def create_cross_val_splits(
 
         assert not set(train_idxs) & set(test_idxs)
 
-        # alarm_splits.append(
-        #     (all_alarms.loc[enough_train_df_idxs],
-        #      all_alarms.loc[enough_test_df_idxs])
-        # )
         alarm_splits.append(
             (all_alarms.loc[train_idxs],
              all_alarms.loc[test_idxs])
@@ -171,9 +175,73 @@ def create_cross_val_splits(
     return alarm_splits
 
 
-def visualize_cross_vals(all_alarms: pd.DataFrame, n_splits=10):
-    _groups_dfs, dfs_groups = group_alarms_by(all_alarms, group_attrs=['target', 'depth'])
-    visualize_groups(dfs_groups, all_alarms)
+def group_false_alarms(all_false_alarms: pd.DataFrame) -> AlarmGroups:
+    false_alarm_groups, _ = group_alarms_by(all_false_alarms, attrs=['srid', 'site'], group_attrs=['site'])
+
+    groups_dfs = []
+    dfidxs_groups = []
+    # current group id is probably site
+    for groupid, dfs in false_alarm_groups:
+        for df in dfs:
+            r_idx = r_index.Index()
+            for dfidx, utm in df['utm'].iteritems():
+                r_idx.insert(dfidx, utm + utm)  # hack to insert a point
+
+            for (leaf_id, dfidxs, coords) in r_idx.leaves():
+                groups_dfs.append(
+                    ((tuple(coords[:2]), f'{"_".join(groupid)}_miss_{leaf_id}'), all_false_alarms.loc[dfidxs])
+                )
+
+                dfidxs_groups.extend(
+                    [(dfidx, (tuple(coords[:2]), f'{"_".join(groupid)}_miss_{leaf_id}')) for dfidx in dfidxs]
+                )
+
+    return groups_dfs, dfidxs_groups
+
+
+def join_cross_val_splits(cv_splits_1: List[CrossValSplit], alarms_1: pd.DataFrame, groups_dfs_1: List[GroupedAlarms],
+                          dfs_groups_1: List[Tuple[int, AlarmGroupId]],
+                          cv_splits_2: List[CrossValSplit], alarms_2: pd.DataFrame, groups_dfs_2: List[GroupedAlarms],
+                          dfs_groups_2: List[Tuple[int, AlarmGroupId]]
+                          ) -> Tuple[
+    List[CrossValSplit], pd.DataFrame, List[GroupedAlarms], List[Tuple[int, AlarmGroupId]]]:
+    common_groupdids = set(map(itemgetter(0), groups_dfs_1)) & set(map(itemgetter(0), groups_dfs_2))
+    assert not common_groupdids, f'groupids collision {common_groupdids}'
+
+    common_dfidxs = set(map(itemgetter(0), dfs_groups_1)) & set(map(itemgetter(0), dfs_groups_2))
+    assert not common_dfidxs, f'dfidx collision {common_dfidxs}'
+
+    cv_splits = []
+    for cv_11, cv_12 in zip(cv_splits_1, cv_splits_2):
+        concat_split = map(pd.concat, zip(cv_11, cv_12))
+        for cp in concat_split:
+            cp.index = cp.index.map(int)
+        cv_splits.append(
+            concat_split
+        )
+
+    concat_alarms = pd.concat([alarms_1, alarms_2])
+    concat_alarms.index = concat_alarms.index.map(int)
+
+    return (
+        cv_splits,
+        concat_alarms,
+        groups_dfs_1 + groups_dfs_2,
+        dfs_groups_1 + dfs_groups_2
+    )
+
+
+def visualize_cross_vals(alarms: pd.DataFrame, n_splits=10):
+    true_alarms = alarms[alarms['HIT'] == 1].copy(deep=True)
+    false_alarms = alarms[alarms['HIT'] == 0].copy(deep=True)
+    del alarms
+
+    ### these functions mutate the df passed in (sort and reset index after sort)
+    true_alarm_groups_dfs, true_alarm_dfs_groups = group_alarms_by(true_alarms, group_attrs=['target', 'depth'])
+    false_alarm_groups_dfs, false_alarm_dfs_groups = group_false_alarms(false_alarms)
+
+    visualize_groups(true_alarm_dfs_groups, true_alarms)
+    visualize_groups(false_alarm_dfs_groups, false_alarms)
 
     cvs = [
         # KFold(n_splits=n_splits),
@@ -187,71 +255,24 @@ def visualize_cross_vals(all_alarms: pd.DataFrame, n_splits=10):
     ]
 
     for cv in cvs:
-        cross_val_splits = create_cross_val_splits(n_splits, cv, all_alarms, dfs_groups)
-        plot_cv_indices(cv, cross_val_splits, dfs_groups, all_alarms)
+        true_alarm_cross_val_splits = create_cross_val_splits(n_splits, cv, true_alarms, true_alarm_dfs_groups)
+        false_alarm_cross_val_splits = create_cross_val_splits(n_splits, cv, false_alarms, false_alarm_dfs_groups)
+
+        cross_val_splits, alarms, groups_dfs, dfs_groups = join_cross_val_splits(
+            true_alarm_cross_val_splits, true_alarms, true_alarm_groups_dfs, true_alarm_dfs_groups,
+            false_alarm_cross_val_splits, false_alarms, false_alarm_groups_dfs, false_alarm_dfs_groups,
+        )
+
+        plot_cv_indices(cv, cross_val_splits, dfs_groups, alarms)
 
 
 root = os.getcwd()
 tuf_table_file_name = 'three_maxs_table.csv'
 tuf_table_file_name = 'medium_maxs_table.csv'
-tuf_table_file_name = 'big_maxs_table.csv'
+# tuf_table_file_name = 'big_maxs_table.csv'
 # tuf_table_file_name = 'all_maxs.csv'
 all_alarms = tuf_table_csv_to_df(os.path.join(root, tuf_table_file_name))
-# df['corners'] = df['corners'].map(tuple, na_action='ignore')
-# attrs = ['srid', 'target', 'depth', 'corners']
-
-# _groups_dfs, dfs_groups = group_alarms_by(df, attrs)
 
 visualize_cross_vals(all_alarms, n_splits=10)
-# groups_dfs, dfs_groups = group_alarms_by(df, ['srid', 'depth', 'corners', 'target'], ['lane'])
-
-#
-
-# print(cross_val_folds)
-
-# dataset = AlarmDataset(
-#     csv_file='data/three_region_cross_val.csv',
-#     root_dir='data/',
-#     transform=transforms.ToTensor()
-# )
-#
-# for train_idx, validation_idx in KFold(n_splits=10).split(np.zeros((len(dataset), 1))):  # (samples, features)
-#     train_sampler = SubsetRandomSampler(train_idx)
-#     validation_sampler = SubsetRandomSampler(validation_idx)
-#
-#     train_loader = DataLoader(
-#         dataset,
-#         batch_size=1,
-#         sampler=train_sampler
-#     )
-#
-#     validation_loader = DataLoader(
-#         dataset,
-#         batch_size=2,
-#         sampler=validation_sampler
-#     )
-#     for epoch in range(2):
-#         for batch_index, (inputs, label) in enumerate(train_loader):
-#             print(epoch, batch_index, label)
-#
-#     for epoch in range(2):
-#         for batch_index, (inputs, labels) in enumerate(validation_loader):
-#             print(epoch, batch_index, labels)
-#
-# def convert_utm_to_lat_lon(df):
-#     # Define the two projections.
-#     # p1 = pyproj.Proj(init='eps:32618')
-#     p1 = pyproj.Proj('+proj=utm +zone=18 +datum=WGS84 +units=m +no_defs')
-#     # p2 = pyproj.Proj(init='eps:32601')
-#     p2 = pyproj.Proj('+proj=utm +zone=1 +datum=WGS84 +units=m +no_defs')
-#     # p3 = pyproj.Proj(init='eps:32611')
-#     p3 = pyproj.Proj('+proj=utm +zone=11 +datum=WGS84 +units=m +no_defs')
-#
-#     df
 
 
-# region hold out target stratified
-
-# normalize names
-
-# depth and name as label

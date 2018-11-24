@@ -17,7 +17,7 @@ mpl.rcParams['figure.dpi'] = 300
 from util import *
 
 
-def visualize_groups(dfs_groups, all_alarms, lw=50):
+def visualize_groups(dfs_groups, alarms, lw=50):
     # Visualize dataset groups
 
     if DEBUG:
@@ -27,7 +27,7 @@ def visualize_groups(dfs_groups, all_alarms, lw=50):
 
     fig_name = 'Classes and Groups'
     ax.set_title(fig_name, fontsize=15)
-    n_samples = len(all_alarms)
+    n_samples = len(alarms)
 
     group_color_map = map(lambda dfs_grp: hash(dfs_grp[1]), dfs_groups)
 
@@ -37,8 +37,11 @@ def visualize_groups(dfs_groups, all_alarms, lw=50):
     norm = Normalize(vmin=min(group_color_map)-100, vmax=max(group_color_map)+100)
     cmap = plt.cm.ScalarMappable(norm=norm, cmap=cmap_data)
     colors = map(lambda c: cmap.to_rgba(c), group_color_map)
+    
+    hits_misses = alarms.loc[map(itemgetter(0), dfs_groups)]['HIT']
+    
     ax.scatter(range(n_samples), [3.5] * n_samples,
-               c=all_alarms.loc[map(itemgetter(0), dfs_groups)]['HIT'], marker='_', lw=lw, cmap=cmap_data)
+               c=list(hits_misses), marker='_', lw=lw, cmap=cmap_data)
 
     ax.scatter(range(n_samples), [.5] * n_samples,
                c=colors, marker='_', lw=lw, cmap=cmap_data)
@@ -57,13 +60,16 @@ def visualize_groups(dfs_groups, all_alarms, lw=50):
     # plt.savefig(f'{fig_name}.png')
 
 
-def plot_cv_indices(cv, splits, groups, all_alarms, lw=10):
+def plot_cv_indices(cv, splits, groups, alarms, lw=10):
     """Create a sample plot for indices of a cross-validation object."""
     # fig, ax = plt.subplots(figsize=(20, 10))
     fig, ax = plt.subplots()
     n_samples = sum(map(len, splits[0]))
     n_splits = len(splits)
     group_color_map = map(lambda dfs_grp: hash(dfs_grp[1]), groups)
+    
+    hits_misses = alarms.loc[map(itemgetter(0), groups)]['HIT']
+    
     # Generate the training/testing visualizations for each CV split
     for i, (train_df, test_df) in enumerate(splits):
         # Fill in indices with the training/test groups
@@ -78,7 +84,7 @@ def plot_cv_indices(cv, splits, groups, all_alarms, lw=10):
 
 
     ax.scatter(range(n_samples), [i + 1.5] * n_samples,
-               c=all_alarms.loc[map(itemgetter(0), groups)]['HIT'], marker='_', lw=lw, cmap=cmap_data)
+               c=list(hits_misses), marker='_', lw=lw, cmap=cmap_data)
 
     ax.scatter(range(n_samples), [i + 2.5] * n_samples,
                c=group_color_map, marker='_', lw=lw, cmap=cmap_data)
