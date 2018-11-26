@@ -1,5 +1,4 @@
 from operator import itemgetter
-import logging
 
 from matplotlib.patches import Patch, Rectangle
 from matplotlib.colors import Normalize
@@ -17,7 +16,7 @@ mpl.rcParams['figure.dpi'] = 300
 from util import *
 
 
-def visualize_groups(dfs_groups, alarms, title, lw=50):
+def visualize_groups(dfs_groups, alarms, title, lw=50, save=False):
     # Visualize dataset groups
 
     if DEBUG:
@@ -59,11 +58,14 @@ def visualize_groups(dfs_groups, alarms, title, lw=50):
     ax.set(ylim=[-1, 5], yticks=[.5, 3.5],
            yticklabels=['group', 'class'], xlabel="Sample index")
     plt.tight_layout()
-    plt.show()
-    # plt.savefig(f'{fig_name}.png')
+    if save:
+        plt.savefig(f'{fig_name}.png')
+    else:
+        plt.show()
+    plt.close(fig)
 
 
-def plot_cv_indices(cv, splits, groups, alarms, title, lw=10):
+def plot_cv_indices(splits, groups, alarms, title, lw=10, save=False):
     """Create a sample plot for indices of a cross-validation object."""
     # fig, ax = plt.subplots(figsize=(20, 10))
     fig, ax = plt.subplots()
@@ -96,8 +98,7 @@ def plot_cv_indices(cv, splits, groups, alarms, title, lw=10):
     ax.set(yticks=np.arange(n_splits + 2) + .5, yticklabels=yticklabels,
            xlabel='Sample index', ylabel="CV iteration",
            ylim=[n_splits + 2.2, -.2], xlim=[0, n_samples])
-    fig_name = '{}'.format(type(cv).__name__)
-    ax.set_title(f'{fig_name} {title}', fontsize=15)
+    ax.set_title(title, fontsize=15)
 
     extra = Rectangle((0, 0), 1, 1, fc="w", fill=False, edgecolor='none', linewidth=0)
 
@@ -108,5 +109,8 @@ def plot_cv_indices(cv, splits, groups, alarms, title, lw=10):
     )
     # Make the legend fit
     plt.tight_layout()
-    plt.show()
-    # plt.savefig(f'{fig_name}.png')
+    if save:
+        plt.savefig(f'{title}.png')
+    else:
+        plt.show()
+    plt.close(fig)
