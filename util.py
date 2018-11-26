@@ -5,6 +5,7 @@ from operator import itemgetter
 
 __all__ = [
     'map', 'filter', 'zip',
+    'old_map', 'old_filter', 'old_zip',
     'profile',
     'DEBUG'
 ]

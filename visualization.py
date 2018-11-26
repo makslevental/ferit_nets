@@ -19,16 +19,12 @@ from util import *
 def visualize_groups(dfs_groups, alarms, title, lw=50, save=False):
     # Visualize dataset groups
 
-    if DEBUG:
-        fig, ax = plt.subplots(figsize=(10, 12))
-    else:
-        fig, ax = plt.subplots()
+    fig, ax = plt.subplots(figsize=(10, 6))
 
     fig_name = 'Classes and Groups'
     ax.set_title(f'{fig_name} {title}', fontsize=15)
 
     group_color_map = map(lambda dfs_grp: hash(dfs_grp[1]), dfs_groups)
-
     unique_colors = list(dict.fromkeys(group_color_map))
     unique_groups = list(dict.fromkeys(map(itemgetter(1), dfs_groups)))
 
@@ -49,10 +45,19 @@ def visualize_groups(dfs_groups, alarms, title, lw=50, save=False):
 
     extra = Rectangle((0, 0), 1, 1, fc="w", fill=False, edgecolor='none', linewidth=0)
     ax.legend(
-        [Patch(color=cmap_cv(.9)), Patch(color=cmap_data(0)), extra] + [Patch(color=cmap.to_rgba(c)) for c in
-                                                                        unique_colors] if DEBUG else [],
-        ['HIT', 'MISS', ''] + unique_groups if DEBUG else [],
-        loc=(1.02, 0.8)
+        [
+            Patch(color=cmap_cv(.9)),
+            Patch(color=cmap_data(0)),
+            extra,
+            *[Patch(color=cmap.to_rgba(c)) for c in unique_colors]
+        ],
+        [
+            'HIT',
+            'MISS',
+            '',
+            *unique_groups
+        ],
+        loc=(1.02, 0)
     )
 
     ax.set(ylim=[-1, 5], yticks=[.5, 3.5],
@@ -65,15 +70,22 @@ def visualize_groups(dfs_groups, alarms, title, lw=50, save=False):
     plt.close(fig)
 
 
-def plot_cv_indices(splits, groups, alarms, title, lw=10, save=False):
+def plot_cv_indices(splits, dfs_groups, alarms, title, lw=10, save=False):
     """Create a sample plot for indices of a cross-validation object."""
-    # fig, ax = plt.subplots(figsize=(20, 10))
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    group_color_map = map(lambda dfs_grp: hash(dfs_grp[1]), dfs_groups)
+    unique_colors = list(dict.fromkeys(group_color_map))
+    unique_groups = list(dict.fromkeys(map(itemgetter(1), dfs_groups)))
+
+    norm = Normalize(vmin=min(group_color_map) - 100, vmax=max(group_color_map) + 100)
+    cmap = plt.cm.ScalarMappable(norm=norm, cmap=cmap_data)
+    colors = map(lambda c: cmap.to_rgba(c), group_color_map)
+
     n_samples = sum(map(len, splits[0]))
     n_splits = len(splits)
-    group_color_map = map(lambda dfs_grp: hash(dfs_grp[1]), groups)
 
-    hits_misses = alarms.loc[map(itemgetter(0), groups)]['HIT']
+    hits_misses = alarms.loc[map(itemgetter(0), dfs_groups)]['HIT']
 
     # Generate the training/testing visualizations for each CV split
     for i, (train_df, test_df) in enumerate(splits):
@@ -103,9 +115,19 @@ def plot_cv_indices(splits, groups, alarms, title, lw=10, save=False):
     extra = Rectangle((0, 0), 1, 1, fc="w", fill=False, edgecolor='none', linewidth=0)
 
     ax.legend(
-        [Patch(color=cmap_cv(.8)), Patch(color=cmap_cv(.02)), extra],
-        ['Testing set', 'Training set', f'N groups: {len(set(group_color_map))}'],
-        loc=(1.02, .8)
+        [
+            Patch(color=cmap_cv(.8)),
+            Patch(color=cmap_cv(.02)),
+            extra,
+            *[Patch(color=cmap.to_rgba(c)) for c in unique_colors]
+        ],
+        [
+            'Testing set',
+            'Training set',
+            f'N groups: {len(set(group_color_map))}',
+            *unique_groups
+        ],
+        loc=(1.02, 0)
     )
     # Make the legend fit
     plt.tight_layout()

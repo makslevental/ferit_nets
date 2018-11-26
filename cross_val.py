@@ -7,7 +7,8 @@ from functools import reduce
 from operator import itemgetter
 from typing import List, Tuple, Optional, Dict, Union, NewType
 from sklearn.model_selection import (StratifiedKFold, KFold, GroupKFold, BaseCrossValidator, GroupShuffleSplit,
-                                     StratifiedShuffleSplit, ShuffleSplit, RepeatedKFold, RepeatedStratifiedKFold)
+                                     StratifiedShuffleSplit, ShuffleSplit, RepeatedKFold, RepeatedStratifiedKFold,
+                                     LeaveOneGroupOut)
 from rtree import index as r_index
 import h5py
 import numpy as np
@@ -97,7 +98,7 @@ def group_alarms_by(alarms: pd.DataFrame,
     alarms = alarms.copy(deep=True)
 
     if group_attrs:
-        assert set(group_attrs) <= set(attrs)
+        assert set(group_attrs) <= set(attrs), f'group attr not in groupby attrs {group_attrs} {attrs}'
     group_idx_attr_map = {attr: i for i, attr in enumerate(attrs)}
 
     alarms.sort_values(attrs, inplace=True, na_position='last')
@@ -138,28 +139,31 @@ def create_cross_val_splits(n_splits: int,
                             groups=None
                             ) -> List[CrossValSplit]:
     group_sizes = Counter(map(itemgetter(1), dfidxs_groups))
+
     # if number of instances/grouping is less than the number of folds then you can't distribute across the folds evenly
-    enough = [(df_idx, groupid) for df_idx, groupid in dfidxs_groups if group_sizes[groupid] >= n_splits]
     not_enough = [(df_idx, groupid) for df_idx, groupid in dfidxs_groups if group_sizes[groupid] < n_splits]
+    if getattr(cv, 'shuffle', None): np.random.shuffle(not_enough)
+    not_enough_splits = np.array_split(map(itemgetter(0), not_enough), n_splits)
 
     if len(not_enough):
         not_enough_counts = ",".join([str(gid) for gid in group_sizes if group_sizes[gid] < n_splits])
         logging.info(f'groups with not enough for n={n_splits}: {not_enough_counts}')
 
+    enough = [(df_idx, groupid) for df_idx, groupid in dfidxs_groups if group_sizes[groupid] >= n_splits]
     enough_xs = np.asarray(map(itemgetter(0), enough))
     enough_groups = np.asarray(map(lambda e: '_'.join(map(str, e[1])), enough))
 
-    assert len(set(enough_groups)) >= n_splits, f'not enough groups {len(set(enough_groups))} for splits {n_splits}'
+    if len(set(enough_groups)) < n_splits:
+        warn_msg = f'not enough groups {len(set(enough_groups))} for splits {n_splits}\n using kfold \n'
+        logging.warning(warn_msg)
+        cv_iter = KFold(n_splits=n_splits).split(enough_xs)
+    else:
+        cv_iter = cv.split(
+            X=enough_xs,
+            y=enough_groups,
+            groups=groups or enough_groups
+        )
 
-    cv_iter = cv.split(
-        X=enough_xs,
-        y=enough_groups,
-        groups=groups or enough_groups
-    )
-
-    if getattr(cv, 'shuffle', None): np.random.shuffle(not_enough)
-
-    not_enough_splits = np.array_split(map(itemgetter(0), not_enough), n_splits)
     alarm_splits = []
     # these are indices in enough_group_xs not in the dataframe (because that's how sklearn works)
     for i, (enough_train_idxs, enough_test_idxs) in enumerate(cv_iter):
@@ -184,12 +188,11 @@ def create_cross_val_splits(n_splits: int,
         not_enough_group_train_idxs = np.hstack(not_enough_splits[:j] + not_enough_splits[j + 1:])
         not_enough_group_test_idxs = not_enough_splits[j]
 
-        assert not set(enough_train_df_idxs) & set(enough_test_df_idxs)
-        assert not set(not_enough_group_train_idxs) & set(not_enough_group_test_idxs)
-
         train_idxs = np.hstack([enough_train_df_idxs, not_enough_group_train_idxs])
         test_idxs = np.hstack([enough_test_df_idxs, not_enough_group_test_idxs])
 
+        assert not set(enough_train_df_idxs) & set(enough_test_df_idxs)
+        assert not set(not_enough_group_train_idxs) & set(not_enough_group_test_idxs)
         assert not set(train_idxs) & set(test_idxs)
 
         train_df = alarms.loc[train_idxs]
@@ -360,17 +363,15 @@ def split_true_false_alarms(all_alarms: pd.DataFrame):
     return true_alarms, false_alarms
 
 
-def region_holdout(alarms: pd.DataFrame, n_splits=10):
+def _splits(cv, alarms: pd.DataFrame, n_splits, attrs, group_attrs) -> Tuple[
+    List[CrossValSplit], pd.DataFrame, List[GroupedAlarms], List[Tuple[int, AlarmGroupId]]
+]:
     true_alarms, false_alarms = split_true_false_alarms(alarms)
 
     (true_alarm_groups_dfs, true_alarm_dfs_groups), grouped_true_alarms = group_alarms_by(true_alarms,
-                                                                                          attrs=['srid', 'lane',
-                                                                                                 'depth',
-                                                                                                 'corners'],
-                                                                                          group_attrs=['lane'])
+                                                                                          attrs=attrs,
+                                                                                          group_attrs=group_attrs)
     (false_alarm_groups_dfs, false_alarm_dfs_groups), grouped_false_alarms = group_false_alarms(false_alarms)
-
-    cv = GroupKFold(n_splits=n_splits)
 
     true_alarm_cross_val_splits = create_cross_val_splits(n_splits, cv, grouped_true_alarms, true_alarm_dfs_groups)
     false_alarm_cross_val_splits = create_cross_val_splits(n_splits, cv, grouped_false_alarms, false_alarm_dfs_groups)
@@ -380,24 +381,50 @@ def region_holdout(alarms: pd.DataFrame, n_splits=10):
         false_alarm_cross_val_splits, grouped_false_alarms, false_alarm_dfs_groups,
     )
 
-    visualize_cross_vals(cross_val_splits, dfs_groups, alarms, cv)
+    return cross_val_splits, alarms, groups_dfs, dfs_groups
 
 
-def visualize_cross_vals(cross_val_splits, dfs_groups, alarms, cv):
+def kfold_region_splits(alarms: pd.DataFrame, n_splits=10) -> Tuple[
+    List[CrossValSplit], pd.DataFrame, List[GroupedAlarms], List[Tuple[int, AlarmGroupId]]
+]:
+    cv = LeaveOneGroupOut()
+    return _splits(cv, alarms, n_splits, attrs=['srid', 'lane', 'depth', 'corners'], group_attrs=['lane'])
+
+
+def kfold_stratified_target_splits(alarms: pd.DataFrame, n_splits=10) -> Tuple[
+    List[CrossValSplit], pd.DataFrame, List[GroupedAlarms], List[Tuple[int, AlarmGroupId]]
+]:
+    cv = StratifiedKFold(n_splits=n_splits)
+    return _splits(cv, alarms, n_splits, attrs=['srid', 'target', 'depth', 'corners'], group_attrs=['target'])
+
+
+def visualize_cross_vals(cross_val_splits: List[CrossValSplit], dfs_groups: List[Tuple[int, AlarmGroupId]],
+                         alarms: pd.DataFrame, cv: str):
     visualize_groups(dfs_groups, alarms, 'classes/groups')
-    plot_cv_indices(cross_val_splits, dfs_groups, alarms, f'{type(cv).__name__}')
+    plot_cv_indices(cross_val_splits, dfs_groups, alarms, cv)
+
+
+def region_and_stratified(alarms: pd.DataFrame, n_splits_region, n_splits_stratified):
+    rgn_splits, rgn_alarms, rgn_groups_dfs, rgn_dfs_groups = kfold_region_splits(alarms, n_splits_region)
+    visualize_cross_vals(rgn_splits, rgn_dfs_groups, rgn_alarms, 'region logo fold')
+    for rgn_train, rgn_test in rgn_splits:
+        strat_splits, strat_alarms, strat_groups_dfs, strat_dfs_groups = kfold_stratified_target_splits(
+            rgn_train, n_splits_stratified)
+        visualize_cross_vals(strat_splits, strat_dfs_groups, strat_alarms, 'strat k fold')
 
 
 if __name__ == '__main__':
     root = os.getcwd()
     # tuf_table_file_name = 'small_maxs_table.csv'
     # tuf_table_file_name = 'medium_maxs_table.csv'
-    tuf_table_file_name = 'big_maxs_table.csv'
-    # tuf_table_file_name = 'bigger_maxs_table.csv'
+    # tuf_table_file_name = 'big_maxs_table.csv'
+    tuf_table_file_name = 'bigger_maxs_table.csv'
     # tuf_table_file_name = 'even_bigger_maxs_table.csv'
     # tuf_table_file_name = 'all_maxs.csv'
     all_alarms_motherfucker = tuf_table_csv_to_df(os.path.join(root, tuf_table_file_name))
-    profile(region_holdout, [all_alarms_motherfucker], {'n_splits': 3})
+    region_and_stratified(all_alarms_motherfucker, n_splits_region=3, n_splits_stratified=10)
+
+    # profile(kfold_region_splits, [all_alarms_motherfucker], {'n_splits': 3})
 
 # def compute_cross_val_stats(cross_vals: List[CrossValSplit], attrs: List[str] = None):
 #     if attrs is None: attrs = ['srid', 'target', 'depth', 'corners']
