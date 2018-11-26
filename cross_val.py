@@ -188,11 +188,11 @@ def create_cross_val_splits(n_splits: int,
         not_enough_group_train_idxs = np.hstack(not_enough_splits[:j] + not_enough_splits[j + 1:])
         not_enough_group_test_idxs = not_enough_splits[j]
 
+        assert not set(enough_train_df_idxs) & set(not_enough_group_train_idxs)
         train_idxs = np.hstack([enough_train_df_idxs, not_enough_group_train_idxs])
+        assert not set(enough_train_df_idxs) & set(not_enough_group_train_idxs)
         test_idxs = np.hstack([enough_test_df_idxs, not_enough_group_test_idxs])
 
-        assert not set(enough_train_df_idxs) & set(enough_test_df_idxs)
-        assert not set(not_enough_group_train_idxs) & set(not_enough_group_test_idxs)
         assert not set(train_idxs) & set(test_idxs)
 
         train_df = alarms.loc[train_idxs]
@@ -384,7 +384,7 @@ def _splits(cv, alarms: pd.DataFrame, n_splits, attrs, group_attrs) -> Tuple[
     return cross_val_splits, alarms, groups_dfs, dfs_groups
 
 
-def kfold_region_splits(alarms: pd.DataFrame, n_splits=10) -> Tuple[
+def logo_region_splits(alarms: pd.DataFrame, n_splits=10) -> Tuple[
     List[CrossValSplit], pd.DataFrame, List[GroupedAlarms], List[Tuple[int, AlarmGroupId]]
 ]:
     cv = LeaveOneGroupOut()
@@ -398,19 +398,20 @@ def kfold_stratified_target_splits(alarms: pd.DataFrame, n_splits=10) -> Tuple[
     return _splits(cv, alarms, n_splits, attrs=['srid', 'target', 'depth', 'corners'], group_attrs=['target'])
 
 
-def visualize_cross_vals(cross_val_splits: List[CrossValSplit], dfs_groups: List[Tuple[int, AlarmGroupId]],
-                         alarms: pd.DataFrame, cv: str):
+def vis_crossv_folds(cross_val_splits: List[CrossValSplit], dfs_groups: List[Tuple[int, AlarmGroupId]],
+                     alarms: pd.DataFrame, cv: str):
     visualize_groups(dfs_groups, alarms, 'classes/groups')
     plot_cv_indices(cross_val_splits, dfs_groups, alarms, cv)
 
 
 def region_and_stratified(alarms: pd.DataFrame, n_splits_region, n_splits_stratified):
-    rgn_splits, rgn_alarms, rgn_groups_dfs, rgn_dfs_groups = kfold_region_splits(alarms, n_splits_region)
-    visualize_cross_vals(rgn_splits, rgn_dfs_groups, rgn_alarms, 'region logo fold')
-    for rgn_train, rgn_test in rgn_splits:
+    rgn_splits, rgn_alarms, rgn_groups_dfs, rgn_dfs_groups = logo_region_splits(alarms, n_splits_region)
+    vis_crossv_folds(rgn_splits, rgn_dfs_groups, rgn_alarms, 'region logo fold')
+
+    for i, (rgn_train, rgn_test) in enumerate(rgn_splits):
         strat_splits, strat_alarms, strat_groups_dfs, strat_dfs_groups = kfold_stratified_target_splits(
             rgn_train, n_splits_stratified)
-        visualize_cross_vals(strat_splits, strat_dfs_groups, strat_alarms, 'strat k fold')
+        vis_crossv_folds(strat_splits, strat_dfs_groups, strat_alarms, f'strat {n_splits_stratified} folds region fold {i}')
 
 
 if __name__ == '__main__':
