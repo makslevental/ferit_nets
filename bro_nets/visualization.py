@@ -6,15 +6,18 @@ from matplotlib.colors import Normalize
 import numpy as np
 import matplotlib.pyplot as plt
 
-cmap_data = plt.cm.Paired
-cmap_cv = plt.cm.coolwarm
+from bro_nets.util import *
+
+from tensorboardX import SummaryWriter
+
+writer = SummaryWriter('logs')
 
 import matplotlib as mpl
 
 mpl.rcParams['figure.dpi'] = 300
 
-from bro_nets.util import *
-from bro_nets import DEBUG
+cmap_data = plt.cm.Paired
+cmap_cv = plt.cm.coolwarm
 
 
 def visualize_groups(dfs_groups, alarms, title, lw=50, save=False):

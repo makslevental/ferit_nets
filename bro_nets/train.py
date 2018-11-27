@@ -7,6 +7,7 @@ from torch.utils.data import DataLoader
 from bro_nets.cross_val import tuf_table_csv_to_df
 from bro_nets.data import create_dataloader
 from bro_nets.models427 import GPR_15_300
+from bro_nets.visualization import writer
 
 
 def train(dataloader: DataLoader, epochs=10):
@@ -43,11 +44,13 @@ def train(dataloader: DataLoader, epochs=10):
             running_loss += loss.item()
 
             i += 1
+            writer.add_scalar('Train/Loss', loss, i)
             if i % 200 == 199:  # print every 200 mini-batches (mini batch is batch inside multi epoch?)
                 print(f'[epoch {epoch}, batch {i}] loss: {running_loss:.10f}')
             # running_loss = 0.0
 
     print('Finished Training')
+    writer.close()
     return net
 
 if __name__ == '__main__':
