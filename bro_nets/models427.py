@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import numpy as np
 # from torch.nn import SELU
 from torch.autograd import Variable
-from MNN_New2D import MNN
+# from MNN_New2D import MNN
 import gzip
 
 #

@@ -10,46 +10,18 @@ from sklearn.model_selection import (StratifiedKFold, KFold, GroupKFold, BaseCro
                                      StratifiedShuffleSplit, ShuffleSplit, RepeatedKFold, RepeatedStratifiedKFold,
                                      LeaveOneGroupOut)
 from rtree import index as r_index
-import h5py
 import numpy as np
 import pandas as pd
-from torch.utils.data import Dataset
-from visualization import plot_cv_indices, visualize_groups
+from bro_nets.visualization import plot_cv_indices, visualize_groups
 from pprint import PrettyPrinter
 from shapely.geometry import MultiPoint
 
-from util import *
+from bro_nets.util import *
+from bro_nets import DEBUG
 
 import logging
 
 pp = PrettyPrinter(indent=2)
-
-
-class AlarmDataset(Dataset):
-    def __init__(self, csv_file, root_dir, feature_type='NNsig_NoInt_15_300', transform=None):
-        self.alarms_frame = pd.read_csv(csv_file)
-        self.root_dir = root_dir
-        self.transform = transform
-        self.feature_type = feature_type
-
-    def __len__(self):
-        return len(self.alarms_frame)
-
-    def __getitem__(self, idx):
-        row = self.alarms_frame.iloc[idx]
-        file_name = os.path.join(
-            self.root_dir,
-            row['sample'],
-            row['event_id']
-        )
-        file = h5py.File(f'{file_name}.h5', 'r')
-
-        feature = np.array(file[self.feature_type])
-        hit = row['HIT']
-        if self.transform:
-            feature = self.transform(feature)
-
-        return feature, hit
 
 
 def tuf_table_csv_to_df(fp) -> pd.DataFrame:
@@ -70,11 +42,12 @@ def tuf_table_csv_to_df(fp) -> pd.DataFrame:
     df.drop(['xUTM', 'yUTM'], inplace=True, axis=1)
 
     df.drop(
-        [
+        set(df.columns) &
+        {
             'sensor_type', 'dt', 'ch', 'scan', 'time', 'MineIsInsideLane', 'DIST', 'objectdist',
             'category', 'isDetected', 'IsInsideLane', 'prescreener', 'known_obj', 'event_type', 'id', 'lsd_kv',
             'encoder', 'event_timestamp', 'fold'
-        ],
+        },
         inplace=True,
         axis=1
     )
@@ -411,7 +384,8 @@ def region_and_stratified(alarms: pd.DataFrame, n_splits_region, n_splits_strati
     for i, (rgn_train, rgn_test) in enumerate(rgn_splits):
         strat_splits, strat_alarms, strat_groups_dfs, strat_dfs_groups = kfold_stratified_target_splits(
             rgn_train, n_splits_stratified)
-        vis_crossv_folds(strat_splits, strat_dfs_groups, strat_alarms, f'strat {n_splits_stratified} folds region fold {i}')
+        vis_crossv_folds(strat_splits, strat_dfs_groups, strat_alarms,
+                         f'strat {n_splits_stratified} folds region fold {i}')
 
 
 if __name__ == '__main__':

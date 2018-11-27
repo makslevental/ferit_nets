@@ -7,8 +7,8 @@ __all__ = [
     'map', 'filter', 'zip',
     'old_map', 'old_filter', 'old_zip',
     'profile',
-    'DEBUG'
 ]
+
 
 def randomword(length):
     letters = string.ascii_lowercase
@@ -21,8 +21,6 @@ old_zip = zip
 zip = lambda x, y: list(old_zip(x, y))
 old_map = map
 map = lambda x, y: list(old_map(x, y))
-
-DEBUG = False
 
 
 def profile(fn, args, kwargs):
