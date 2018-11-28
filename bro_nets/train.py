@@ -3,19 +3,18 @@ import os
 import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader
+import pandas as pd
 
-from bro_nets.cross_val import tuf_table_csv_to_df
+from bro_nets.cross_val import tuf_table_csv_to_df, region_and_stratified
 from bro_nets.data import create_dataloader
 from bro_nets.models427 import GPR_15_300
 from bro_nets.visualization import writer
+from bro_nets import device
 
 
 def train(dataloader: DataLoader, epochs=10):
     net = GPR_15_300()
-    # net.cuda()
-    # net.train()
 
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print(device)
 
     net.to(device, dtype=torch.float)
@@ -25,11 +24,13 @@ def train(dataloader: DataLoader, epochs=10):
 
     i = 0
     for epoch in range(epochs):  # loop over the dataset multiple times
-
         running_loss = 0.0
         for inputs, labels in dataloader:
             # get the inputs
-            inputs, labels = inputs.to(device, dtype=torch.float), labels.to(device, dtype=torch.long)
+            inputs, labels = (
+                inputs.to(device, dtype=torch.float),
+                labels.to(device, dtype=torch.long)
+            )
 
             # zero the parameter gradients
             optimizer.zero_grad()
@@ -53,10 +54,28 @@ def train(dataloader: DataLoader, epochs=10):
     writer.close()
     return net
 
+
+def train_with_cross_val(alarms: pd.DataFrame):
+    for train_split, test_data in region_and_stratified(alarms, n_splits_region=3, n_splits_stratified=5):
+        test_loader = create_dataloader(test_data)
+        for inputs, labels in test_loader:
+            print(inputs, labels)
+        for train_data, validation_data in train_split:
+            train_loader = create_dataloader(train_data)
+            validation_loader = create_dataloader(validation_data)
+
+            for inputs, labels in train_loader:
+                print(inputs, labels)
+                print(validation_data)
+            for inputs, labels in validation_loader:
+                print(inputs, labels)
+                print(validation_data)
+
+
+
 if __name__ == '__main__':
     root = os.getcwd()
-    tuf_table_file_name = 'three_stratified_cross_val.csv'
-    all_alarms_motherfucker = tuf_table_csv_to_df(os.path.join(root, 'data', tuf_table_file_name))
+    tuf_table_file_name = 'small_maxs_table.csv'
+    all_alarms = tuf_table_csv_to_df(os.path.join(root, tuf_table_file_name))
 
-    dl = create_dataloader(all_alarms_motherfucker)
-    train(dl)
+    train_with_cross_val(all_alarms)

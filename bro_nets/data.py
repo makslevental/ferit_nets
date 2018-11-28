@@ -6,7 +6,7 @@ import pandas as pd
 import numpy as np
 from torchvision import transforms
 
-from bro_nets.cross_val import tuf_table_csv_to_df
+from bro_nets.cross_val import tuf_table_csv_to_df, region_and_stratified
 
 from bro_nets import DEBUG
 
@@ -102,8 +102,8 @@ class AlarmDataset(Dataset):
 
         feature = np.array(file[self.feature_type])
         hit = row['HIT']
-        # if self.transform:
-        #     feature = self.transform(feature)
+        if self.transform:
+            feature = self.transform(feature)
 
         return feature, hit
 
@@ -111,7 +111,7 @@ class AlarmDataset(Dataset):
 def create_dataloader(alarms: pd.DataFrame, batch_size=36, shuffle=True) -> DataLoader:
     data_transform = transforms.Compose([
         # transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
+        # transforms.ToTensor(),
         # transforms.Normalize(mean=[0.485, 0.456, 0.406],
         #                      std=[0.229, 0.224, 0.225])
     ])
@@ -128,6 +128,7 @@ def create_dataloader(alarms: pd.DataFrame, batch_size=36, shuffle=True) -> Data
 if __name__ == '__main__':
     root = os.getcwd()
     tuf_table_file_name = 'three_stratified_cross_val.csv'
-    all_alarms_motherfucker = tuf_table_csv_to_df(os.path.join(root, 'data', tuf_table_file_name))
+    all_alarms = tuf_table_csv_to_df(os.path.join(root, 'data', tuf_table_file_name))
+    region_and_stratified(all_alarms, n_splits_region=3, n_splits_stratified=10)
 
-    dl = create_dataloader(all_alarms_motherfucker)
+    dl = create_dataloader(all_alarms)

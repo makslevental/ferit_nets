@@ -26,8 +26,8 @@ def test(net, testloader):
 if __name__ == '__main__':
     root = os.getcwd()
     tuf_table_file_name = 'three_stratified_cross_val.csv'
-    all_alarms_motherfucker = tuf_table_csv_to_df(os.path.join(root, 'data', tuf_table_file_name))
+    all_alarms = tuf_table_csv_to_df(os.path.join(root, 'data', tuf_table_file_name))
 
-    dl = create_dataloader(all_alarms_motherfucker, batch_size=2)
+    dl = create_dataloader(all_alarms, batch_size=2)
     net = train(dl, 1000)
     test(net, dl)

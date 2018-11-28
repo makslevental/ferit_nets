@@ -70,6 +70,11 @@ def group_alarms_by(alarms: pd.DataFrame,
 
     alarms = alarms.copy(deep=True)
 
+    assert set(attrs) <= set(alarms.columns)
+
+    if 'corners' in attrs and isinstance(alarms.loc[0]['corners'], list):
+        raise Exception("didn't cast corners to tuples")
+
     if group_attrs:
         assert set(group_attrs) <= set(attrs), f'group attr not in groupby attrs {group_attrs} {attrs}'
     group_idx_attr_map = {attr: i for i, attr in enumerate(attrs)}
@@ -125,8 +130,9 @@ def create_cross_val_splits(n_splits: int,
     enough = [(df_idx, groupid) for df_idx, groupid in dfidxs_groups if group_sizes[groupid] >= n_splits]
     enough_xs = np.asarray(map(itemgetter(0), enough))
     enough_groups = np.asarray(map(lambda e: '_'.join(map(str, e[1])), enough))
-
-    if len(set(enough_groups)) < n_splits:
+    if len(set(enough_groups)) == 0:
+        raise Exception(f'no groups with {n_splits}: {group_sizes}')
+    elif len(set(enough_groups)) < n_splits:
         warn_msg = f'not enough groups {len(set(enough_groups))} for splits {n_splits}\n using kfold \n'
         logging.warning(warn_msg)
         cv_iter = KFold(n_splits=n_splits).split(enough_xs)
@@ -379,13 +385,17 @@ def vis_crossv_folds(cross_val_splits: List[CrossValSplit], dfs_groups: List[Tup
 
 def region_and_stratified(alarms: pd.DataFrame, n_splits_region, n_splits_stratified):
     rgn_splits, rgn_alarms, rgn_groups_dfs, rgn_dfs_groups = logo_region_splits(alarms, n_splits_region)
-    vis_crossv_folds(rgn_splits, rgn_dfs_groups, rgn_alarms, 'region logo fold')
+    if DEBUG:
+        vis_crossv_folds(rgn_splits, rgn_dfs_groups, rgn_alarms, 'region logo fold')
 
     for i, (rgn_train, rgn_test) in enumerate(rgn_splits):
         strat_splits, strat_alarms, strat_groups_dfs, strat_dfs_groups = kfold_stratified_target_splits(
-            rgn_train, n_splits_stratified)
-        vis_crossv_folds(strat_splits, strat_dfs_groups, strat_alarms,
-                         f'strat {n_splits_stratified} folds region fold {i}')
+            rgn_train, n_splits_stratified
+        )
+        if DEBUG:
+            vis_crossv_folds(strat_splits, strat_dfs_groups, strat_alarms,
+                             f'strat {n_splits_stratified} folds region fold {i}')
+        yield strat_splits, rgn_test
 
 
 if __name__ == '__main__':
@@ -396,37 +406,7 @@ if __name__ == '__main__':
     tuf_table_file_name = 'bigger_maxs_table.csv'
     # tuf_table_file_name = 'even_bigger_maxs_table.csv'
     # tuf_table_file_name = 'all_maxs.csv'
-    all_alarms_motherfucker = tuf_table_csv_to_df(os.path.join(root, tuf_table_file_name))
-    region_and_stratified(all_alarms_motherfucker, n_splits_region=3, n_splits_stratified=10)
+    all_alarms = tuf_table_csv_to_df(os.path.join(root, tuf_table_file_name))
+    region_and_stratified(all_alarms, n_splits_region=3, n_splits_stratified=10)
 
-    # profile(kfold_region_splits, [all_alarms_motherfucker], {'n_splits': 3})
-
-# def compute_cross_val_stats(cross_vals: List[CrossValSplit], attrs: List[str] = None):
-#     if attrs is None: attrs = ['srid', 'target', 'depth', 'corners']
-#     for train, test in cross_vals:
-#
-#         if DEBUG:
-#             train['corners'] = train['corners'].map(tuple, na_action='ignore')
-#             test['corners'] = test['corners'].map(tuple, na_action='ignore')
-#
-#         train = train.sort_values(attrs, na_position='last')
-#         train_gb = train.groupby(attrs, sort=False)
-#
-#         test = test.sort_values(attrs, na_position='last')
-#         test_gb = test.groupby(attrs, sort=False)
-#
-#         train_gb_size = train_gb.size().to_frame('counts')
-#         test_gb_size = test_gb.size().to_frame('counts')
-#
-#         train_gb_size['counts'] = train_gb_size['counts'].map(lambda x: x / sum(train_gb_size['counts']))
-#         test_gb_size['counts'] = test_gb_size['counts'].map(lambda x: x / sum(test_gb_size['counts']))
-#
-#         # for level in train_gb_size.index.levels[0]:
-#         #     for sublevel in train_gb_size.index.levels[1]:
-#         #         for subsublevel in train_gb_size.index.levels[2]:
-#         #             logging.debug('train', level, sublevel, subsublevel, train_gb_size.T[level, sublevel].loc['counts'].values)
-#         #             logging.debug('test', level, sublevel, subsublevel, test_gb_size.T[level, sublevel].loc['counts'].values)
-#
-#         logging.debug(train_gb_size)
-#         logging.debug(test_gb_size)
-#
+    # profile(kfold_region_splits, [all_alarms], {'n_splits': 3})
