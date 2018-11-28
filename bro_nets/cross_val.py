@@ -342,32 +342,40 @@ def split_true_false_alarms(all_alarms: pd.DataFrame):
     return true_alarms, false_alarms
 
 
-def _splits(cv, alarms: pd.DataFrame, n_splits, attrs, group_attrs) -> Tuple[
+def _splits(cv, alarms: pd.DataFrame, n_splits, attrs, group_attrs, handle_true_false_separately=True) -> Tuple[
     List[CrossValSplit], pd.DataFrame, List[GroupedAlarms], List[Tuple[int, AlarmGroupId]]
 ]:
-    true_alarms, false_alarms = split_true_false_alarms(alarms)
+    if handle_true_false_separately:
+        true_alarms, false_alarms = split_true_false_alarms(alarms)
 
-    (true_alarm_groups_dfs, true_alarm_dfs_groups), grouped_true_alarms = group_alarms_by(true_alarms,
-                                                                                          attrs=attrs,
-                                                                                          group_attrs=group_attrs)
-    (false_alarm_groups_dfs, false_alarm_dfs_groups), grouped_false_alarms = group_false_alarms(false_alarms)
+        (true_alarm_groups_dfs, true_alarm_dfs_groups), grouped_true_alarms = group_alarms_by(true_alarms,
+                                                                                              attrs=attrs,
+                                                                                              group_attrs=group_attrs)
+        (false_alarm_groups_dfs, false_alarm_dfs_groups), grouped_false_alarms = group_false_alarms(false_alarms)
 
-    true_alarm_cross_val_splits = create_cross_val_splits(n_splits, cv, grouped_true_alarms, true_alarm_dfs_groups)
-    false_alarm_cross_val_splits = create_cross_val_splits(n_splits, cv, grouped_false_alarms, false_alarm_dfs_groups)
+        true_alarm_cross_val_splits = create_cross_val_splits(n_splits, cv, grouped_true_alarms, true_alarm_dfs_groups)
+        false_alarm_cross_val_splits = create_cross_val_splits(n_splits, cv, grouped_false_alarms,
+                                                               false_alarm_dfs_groups)
 
-    cross_val_splits, alarms, groups_dfs, dfs_groups = join_cross_val_splits(
-        true_alarm_cross_val_splits, grouped_true_alarms, true_alarm_dfs_groups,
-        false_alarm_cross_val_splits, grouped_false_alarms, false_alarm_dfs_groups,
-    )
+        alarm_cross_val_splits, alarms, groups_dfs, dfs_groups = join_cross_val_splits(
+            true_alarm_cross_val_splits, grouped_true_alarms, true_alarm_dfs_groups,
+            false_alarm_cross_val_splits, grouped_false_alarms, false_alarm_dfs_groups,
+        )
+    else:
+        (groups_dfs, dfs_groups), grouped_alarms = group_alarms_by(alarms,
+                                                                   attrs=attrs,
+                                                                   group_attrs=group_attrs)
+        alarm_cross_val_splits = create_cross_val_splits(n_splits, cv, grouped_alarms, dfs_groups)
 
-    return cross_val_splits, alarms, groups_dfs, dfs_groups
+    return alarm_cross_val_splits, alarms, groups_dfs, dfs_groups
 
 
 def logo_region_splits(alarms: pd.DataFrame, n_splits=10) -> Tuple[
     List[CrossValSplit], pd.DataFrame, List[GroupedAlarms], List[Tuple[int, AlarmGroupId]]
 ]:
     cv = LeaveOneGroupOut()
-    return _splits(cv, alarms, n_splits, attrs=['srid', 'lane', 'depth', 'corners'], group_attrs=['lane'])
+    return _splits(cv, alarms, n_splits, attrs=['srid', 'site', 'lane'], group_attrs=['lane'],
+                   handle_true_false_separately=False)
 
 
 def kfold_stratified_target_splits(alarms: pd.DataFrame, n_splits=10) -> Tuple[
@@ -395,7 +403,8 @@ def region_and_stratified(alarms: pd.DataFrame, n_splits_region, n_splits_strati
         if DEBUG:
             vis_crossv_folds(strat_splits, strat_dfs_groups, strat_alarms,
                              f'strat {n_splits_stratified} folds region fold {i}')
-        yield strat_splits, rgn_test
+
+        print("+".join(rgn_train['lane'].unique()), "|", "+".join(rgn_test['lane'].unique()))
 
 
 if __name__ == '__main__':
@@ -403,10 +412,10 @@ if __name__ == '__main__':
     # tuf_table_file_name = 'small_maxs_table.csv'
     # tuf_table_file_name = 'medium_maxs_table.csv'
     # tuf_table_file_name = 'big_maxs_table.csv'
-    tuf_table_file_name = 'bigger_maxs_table.csv'
+    # tuf_table_file_name = 'bigger_maxs_table.csv'
     # tuf_table_file_name = 'even_bigger_maxs_table.csv'
-    # tuf_table_file_name = 'all_maxs.csv'
+    tuf_table_file_name = 'all_maxs.csv'
     all_alarms = tuf_table_csv_to_df(os.path.join(root, tuf_table_file_name))
-    region_and_stratified(all_alarms, n_splits_region=3, n_splits_stratified=10)
+    region_and_stratified(all_alarms, n_splits_region=3, n_splits_stratified=5)
 
     # profile(kfold_region_splits, [all_alarms], {'n_splits': 3})
