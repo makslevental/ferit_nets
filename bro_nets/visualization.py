@@ -9,8 +9,11 @@ import matplotlib.pyplot as plt
 from bro_nets.util import *
 
 from tensorboardX import SummaryWriter
+from datetime import datetime
 
-writer = SummaryWriter('logs')
+now = datetime.now()
+
+writer = SummaryWriter(f'logs/{now}/')
 
 import matplotlib as mpl
 
@@ -69,6 +72,27 @@ def visualize_groups(dfs_groups, alarms, title, lw=50, save=False):
     plt.tight_layout()
     if save:
         plt.savefig(f'{fig_name}.png')
+    else:
+        plt.show()
+    plt.close(fig)
+
+
+def plot_roc(rocs, aucs, title, save=True):
+    fig, ax = plt.subplots()
+
+    lw = 2
+    for i, (name, roc) in enumerate(rocs):
+        fpr, tpr, _ = roc
+        ax.plot(fpr, tpr, lw=lw, label=f'{name} auc {aucs[i]:.3f}')
+
+    ax.plot([0, 1], [0, 1], color='navy', lw=lw, linestyle='--')
+    ax.set(xlabel='FPR', ylabel='TPR',
+           ylim=[0.0, 1.05], xlim=[0.0, 1.0])
+    ax.set_title(title, fontsize=15)
+    ax.legend(loc="lower right")
+    plt.tight_layout()
+    if save:
+        plt.savefig(f'figs/{title}.png')
     else:
         plt.show()
     plt.close(fig)

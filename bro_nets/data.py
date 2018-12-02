@@ -1,14 +1,19 @@
 import h5py
 import os
 
+import torch
+# from numba import njit, jit
 from torch.utils.data import Dataset, DataLoader
 import pandas as pd
 import numpy as np
+from bro_nets.util import profile
 from torchvision import transforms
+import torch.serialization
 
 from bro_nets.cross_val import tuf_table_csv_to_df, region_and_stratified
 
 from bro_nets import DEBUG
+
 
 # class Rescale(object):
 #     """Rescale the image in a sample to a given size.
@@ -23,7 +28,7 @@ from bro_nets import DEBUG
 #         assert isinstance(output_size, (int, tuple))
 #         self.output_size = output_size
 #
-#     def __call__(self, sample):
+#     def __call__(tuf_self, sample):
 #         image, landmarks = sample['image'], sample['landmarks']
 #
 #         h, w = image.shape[:2]
@@ -79,14 +84,43 @@ from bro_nets import DEBUG
 #         return {'image': image, 'landmarks': landmarks}
 #
 
+def compute_normalization(dataset: Dataset):
+    all_tensors = torch.stack([t for t, c in dataset])
+    mean = all_tensors.mean(dim=0)
+    std = all_tensors.std(dim=0)
+    return mean, std
+
+
+def compute_normalization_online(dataset: Dataset):
+    mk_minus_1 = dataset[0][0]
+    sk_minus_1 = torch.zeros_like(mk_minus_1)
+    for k, (xk, _) in enumerate(dataset, 1):
+        print('norm ', k)
+        m = (xk - mk_minus_1)
+        mk = mk_minus_1 + m / k
+        sk = sk_minus_1 + m * (xk - mk)
+
+        mk_minus_1 = mk
+        sk_minus_1 = sk
+
+    return mk, torch.sqrt(sk/(k-1))
+
 
 class AlarmDataset(Dataset):
     def __init__(self, df: pd.DataFrame, data_root_dir=os.path.join(os.getcwd(), 'data'),
-                 feature_type='NNsig_NoInt_15_300', transform=None):
+                 feature_type='NNsig_NoInt_15_300', transform=None, mean=None, std=None):
         self.alarms_frame = df.copy(deep=True)
         self.data_root_dir = data_root_dir
         self.transform = transform
         self.feature_type = feature_type
+        if mean is not None and std is not None:
+            self._mean = mean
+            self._std = std
+        else:
+            # BAD BAD BAD
+            self._mean, self._std = compute_normalization_online(self)
+
+
 
     def __len__(self):
         return len(self.alarms_frame)
@@ -100,22 +134,28 @@ class AlarmDataset(Dataset):
         )
         file = h5py.File(f'{file_name}.h5', 'r')
 
-        feature = np.array(file[self.feature_type])
+        feature = torch.from_numpy(file[self.feature_type].value)
+        if getattr(self, '_mean', None) is not None:
+            feature -= self._mean
+        if getattr(self, '_std', None) is not None:
+            feature /= self._std
+
         hit = row['HIT']
-        if self.transform:
-            feature = self.transform(feature)
+        # if self.transform:
+        #     feature = self.transform(feature)
 
         return feature, hit
 
 
-def create_dataloader(alarms: pd.DataFrame, batch_size=36, shuffle=True) -> DataLoader:
+def create_dataloader(alarms: pd.DataFrame, data_root_dir, batch_size=128, shuffle=True, m=None, s=None) -> DataLoader:
     data_transform = transforms.Compose([
         # transforms.RandomHorizontalFlip(),
         # transforms.ToTensor(),
         # transforms.Normalize(mean=[0.485, 0.456, 0.406],
         #                      std=[0.229, 0.224, 0.225])
     ])
-    al = AlarmDataset(alarms, transform=data_transform)
+    # m, s = torch.serialization.load('mean.pt'), torch.serialization.load('std.pt')
+    al = AlarmDataset(alarms, data_root_dir, mean=m, std=s)
 
     if DEBUG:
         # https://intellij-support.jetbrains.com/hc/en-us/community/posts/360000066410-pydev-debugger-performing-a-KeyboardInterrupt-while-debugging-program-Error-in-atexit-run-exitfuncs-
@@ -127,8 +167,13 @@ def create_dataloader(alarms: pd.DataFrame, batch_size=36, shuffle=True) -> Data
 
 if __name__ == '__main__':
     root = os.getcwd()
-    tuf_table_file_name = 'three_stratified_cross_val.csv'
-    all_alarms = tuf_table_csv_to_df(os.path.join(root, 'data', tuf_table_file_name))
-    region_and_stratified(all_alarms, n_splits_region=3, n_splits_stratified=10)
-
-    dl = create_dataloader(all_alarms)
+    # tuf_table_file_name = 'small_maxs_table.csv'
+    tuf_table_file_name = 'all_maxs.csv'
+    all_alarms = tuf_table_csv_to_df(os.path.join(root, tuf_table_file_name))
+    # region_and_stratified(all_alarms, n_splits_region=3, n_splits_stratified=10)
+    # m1, s1 = compute_normalization_online(al)
+    # print(m1, s1)
+    # torch.serialization.save(m1, 'means.pt')
+    # torch.serialization.save(s1, 'stds.pt')
+    # profile(compute_normalization, [al], sort=['cumtime'])
+    dl = create_dataloader(all_alarms, os.path.join(root, 'data'), batch_size=32)

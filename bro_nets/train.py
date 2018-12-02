@@ -2,6 +2,7 @@ import os
 
 import torch
 import torch.optim as optim
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
 import pandas as pd
 
@@ -9,29 +10,34 @@ from bro_nets.cross_val import tuf_table_csv_to_df, region_and_stratified
 from bro_nets.data import create_dataloader
 from bro_nets.models427 import GPR_15_300
 from bro_nets.visualization import writer
-from bro_nets import device
+from bro_nets import TORCH_DEVICE
+
+import numpy as np
 
 
-def train(dataloader: DataLoader, epochs=10):
-    net = GPR_15_300()
+def train(dataloader: DataLoader, epochs=10, testloader=None):
+    from bro_nets.test import test
+    net = torch.nn.DataParallel(GPR_15_300())
 
-    print(device)
+    print(TORCH_DEVICE)
 
-    net.to(device, dtype=torch.float)
+    net.to(TORCH_DEVICE, dtype=torch.float)
 
     criterion = torch.nn.CrossEntropyLoss()
-    optimizer = optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
+    # optimizer = optim.SGD(net.parameters(), lr=1e-3, momentum=0.9)
+    optimizer = optim.Adam(net.parameters(), lr=1e-3)
 
+    scheduler = CosineAnnealingLR(optimizer, len(dataloader))
     i = 0
     for epoch in range(epochs):  # loop over the dataset multiple times
         running_loss = 0.0
-        for inputs, labels in dataloader:
+        for j, (inputs, labels) in enumerate(dataloader):
             # get the inputs
             inputs, labels = (
-                inputs.to(device, dtype=torch.float),
-                labels.to(device, dtype=torch.long)
+                inputs.to(TORCH_DEVICE, dtype=torch.float),
+                labels.to(TORCH_DEVICE, dtype=torch.long)
             )
-
+            i += len(inputs)
             # zero the parameter gradients
             optimizer.zero_grad()
 
@@ -43,15 +49,23 @@ def train(dataloader: DataLoader, epochs=10):
 
             # print statistics
             running_loss += loss.item()
-
-            i += 1
+            if np.isnan(running_loss):
+                raise Exception('gradients blew up')
             writer.add_scalar('Train/Loss', loss, i)
-            if i % 200 == 199:  # print every 200 mini-batches (mini batch is batch inside multi epoch?)
-                print(f'[epoch {epoch}, batch {i}] loss: {running_loss:.10f}')
-            # running_loss = 0.0
+            writer.add_scalar('Train/LR', optimizer.param_groups[0]['lr'], i)
+
+            print(f'[epoch {epoch}, sample {i}] loss: {running_loss:.10f}')
+
+            # if j % 5 == 0:
+            #     net.eval()
+            #     acc = test(net, testloader)
+            #     net.train()
+            #     writer.add_scalar('Train/acc', acc, i)
+        i = 0
+        scheduler.step()
 
     print('Finished Training')
-    writer.close()
+    # writer.close()
     return net
 
 
@@ -70,7 +84,6 @@ def train_with_cross_val(alarms: pd.DataFrame):
             for inputs, labels in validation_loader:
                 print(inputs, labels)
                 print(validation_data)
-
 
 
 if __name__ == '__main__':

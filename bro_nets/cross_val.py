@@ -8,9 +8,10 @@ from operator import itemgetter
 from typing import List, Tuple, Optional, Dict, Union, NewType
 from sklearn.model_selection import (StratifiedKFold, KFold, GroupKFold, BaseCrossValidator, GroupShuffleSplit,
                                      StratifiedShuffleSplit, ShuffleSplit, RepeatedKFold, RepeatedStratifiedKFold,
-                                     LeaveOneGroupOut)
+                                     LeaveOneGroupOut, LeavePGroupsOut)
 from rtree import index as r_index
 import numpy as np
+# from numba import jit
 import pandas as pd
 from bro_nets.visualization import plot_cv_indices, visualize_groups
 from pprint import PrettyPrinter
@@ -24,22 +25,26 @@ import logging
 pp = PrettyPrinter(indent=2)
 
 
+# @jit(nopython=True, parallel=True)
+def corners_to_tuple(corners: pd.DataFrame) -> Optional[List[Tuple]]:
+    corners = filter(None, corners)
+    num_corners = len(corners)
+    corner_tuples = tuple(zip(corners[:num_corners // 2], corners[num_corners // 2:]))
+    return corner_tuples if len(corner_tuples) else None
+
+
 def tuf_table_csv_to_df(fp) -> pd.DataFrame:
     df = pd.read_csv(fp)
 
     df = df.where((pd.notnull(df)), None)
 
-    def corners_to_tuple(corners: pd.DataFrame) -> Optional[List[Tuple]]:
-        corners = filter(None, corners)
-        num_corners = len(corners)
-        corner_tuples = tuple(zip(corners[:num_corners // 2], corners[num_corners // 2:]))
-        return corner_tuples if len(corner_tuples) else None
-
-    corners_names = filter(lambda x: 'corner' in x, df.columns)
-    df['corners'] = df[corners_names].apply(corners_to_tuple, axis=1)
-    df.drop(corners_names, inplace=True, axis=1)
-    df['utm'] = df[['xUTM', 'yUTM']].apply(lambda u: (u.xUTM, u.yUTM), axis=1)
-    df.drop(['xUTM', 'yUTM'], inplace=True, axis=1)
+    corners_names = filter(lambda x: 'corner_' in x, df.columns)
+    if len(corners_names):
+        df['corners'] = df[corners_names].apply(corners_to_tuple, axis=1)
+        df.drop(corners_names, inplace=True, axis=1)
+    if len(filter(lambda x: 'UTM' in x, df.columns)):
+        df['utm'] = df[['xUTM', 'yUTM']].apply(lambda u: (u.xUTM, u.yUTM), axis=1)
+        df.drop(['xUTM', 'yUTM'], inplace=True, axis=1)
 
     df.drop(
         set(df.columns) &
@@ -180,7 +185,7 @@ def create_cross_val_splits(n_splits: int,
         test_df.index = test_df.index.map(int)
 
         alarm_splits.append((train_df, test_df))
-
+        # yield train_df, test_df
     return alarm_splits
 
 
@@ -373,6 +378,7 @@ def _splits(cv, alarms: pd.DataFrame, n_splits, attrs, group_attrs, handle_true_
 def logo_region_splits(alarms: pd.DataFrame, n_splits=10) -> Tuple[
     List[CrossValSplit], pd.DataFrame, List[GroupedAlarms], List[Tuple[int, AlarmGroupId]]
 ]:
+    # cv = LeavePGroupsOut(n_groups=4)
     cv = LeaveOneGroupOut()
     return _splits(cv, alarms, n_splits, attrs=['srid', 'site', 'lane'], group_attrs=['lane'],
                    handle_true_false_separately=False)
@@ -403,19 +409,33 @@ def region_and_stratified(alarms: pd.DataFrame, n_splits_region, n_splits_strati
         if DEBUG:
             vis_crossv_folds(strat_splits, strat_dfs_groups, strat_alarms,
                              f'strat {n_splits_stratified} folds region fold {i}')
-
-        print("+".join(rgn_train['lane'].unique()), "|", "+".join(rgn_test['lane'].unique()))
-
+        yield strat_splits, rgn_train, rgn_test
+        
 
 if __name__ == '__main__':
     root = os.getcwd()
-    # tuf_table_file_name = 'small_maxs_table.csv'
+    tuf_table_file_name = 'small_maxs_table.csv'
     # tuf_table_file_name = 'medium_maxs_table.csv'
     # tuf_table_file_name = 'big_maxs_table.csv'
     # tuf_table_file_name = 'bigger_maxs_table.csv'
     # tuf_table_file_name = 'even_bigger_maxs_table.csv'
-    tuf_table_file_name = 'all_maxs.csv'
+    # tuf_table_file_name = 'all_maxs.csv'
     all_alarms = tuf_table_csv_to_df(os.path.join(root, tuf_table_file_name))
-    region_and_stratified(all_alarms, n_splits_region=3, n_splits_stratified=5)
+    # region_and_stratified(all_alarms, n_splits_region=3, n_splits_stratified=5)
 
     # profile(kfold_region_splits, [all_alarms], {'n_splits': 3})
+    # rgn_splits, rgn_alarms, rgn_groups_dfs, rgn_dfs_groups = logo_region_splits(all_alarms)
+    # for i, (train, test) in enumerate(rgn_splits):
+    #     # train_fn = f'{"_".join(train["lane"].unique())}.csv'.replace(' ', '_')
+    #     # test_fn = f'{"_".join(test["lane"].unique())}.csv'.replace(' ', '_')
+    #     # print(train_fn, '|', test_fn)
+    #     print(len(train), '|', len(test))
+    #     train_fn = f'fold_{i}_train.csv'
+    #     test_fn = f'fold_{i}_test.csv'
+    #     train.to_csv(f'folds/{train_fn}')
+    #     test.to_csv(f'folds/{test_fn}')
+    #     with open(f'folds/fold_{i}.txt', 'w') as f:
+    #         f.write(f'{train_fn}: {len(train)}\n')
+    #         f.write(f'{test_fn}: {len(test)}')
+    #     if len(test) > 4000:
+    #         break
