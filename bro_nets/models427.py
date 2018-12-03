@@ -1,21 +1,10 @@
-import pdb  # pdb.set_trace()
+import gzip
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
-# from torch.nn import SELU
 from torch.autograd import Variable
-# from MNN_New2D import MNN
-import gzip
-
-#
-# class init_weights():
-#     def __init__(self, init_function):
-#         self.init_func = getattr(torch.nn.init, init_function)
-#
-#     def weight_init(self, m):
-#         if (isinstance(m, torch.nn.Linear) | isinstance(m, torch.nn.Conv2d) | isinstance(m, torch.nn.Conv3d)):
-#             self.init_func(m.weight.data)
 
 
 def compress_layers(net):

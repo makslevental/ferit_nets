@@ -2,22 +2,18 @@ import ast
 import os
 import time
 from collections import defaultdict
-from operator import itemgetter
 
-import torch
-from bro_nets.models427 import GPR_15_300
-from bro_nets.cross_val import tuf_table_csv_to_df, region_and_stratified, kfold_stratified_target_splits
-from bro_nets.data import create_dataloader
-from bro_nets.train import train
-from bro_nets import TORCH_DEVICE
-from sklearn.metrics import roc_curve, roc_auc_score
-import torch.nn.functional as torch_f
 import numpy as np
+import torch
+import torch.nn.functional as torch_f
+from sklearn.metrics import roc_curve, roc_auc_score
 
-from bro_nets.visualization import plot_roc
+from bro_nets.config import TORCH_DEVICE
+from bro_nets.cross_val import tuf_table_csv_to_df, region_and_stratified, kfold_stratified_target_splits
+from bro_nets.models427 import GPR_15_300
+from bro_nets.train import train
 from bro_nets.util import *
-
-from scipy.stats.mstats import gmean
+from bro_nets.visualization import plot_roc
 
 
 def test(net, testloader):
@@ -171,6 +167,7 @@ def test_with_saved():
     print(time.time() - start)
     return netrocs_netaucs_labelsconfs, prescreener_roc, prescreener_auc
 
+
 def prescreener_roc():
     root = '/home/maksim/ferit_nets'
     tuf_table_file_name = 'fold_0_test.csv'
@@ -180,10 +177,11 @@ def prescreener_roc():
     prescreener_auc = roc_auc_score(test_alarms['HIT'], test_alarms['conf'])
     plot_roc(
         [
-         ('prescreener', prescreener_roc)],
+            ('prescreener', prescreener_roc)],
         [prescreener_auc],
         f'F1V4p4v3'
     )
+
 
 def test_with_cross_val(alarms):
     root = '/home/maksim/ferit_nets'

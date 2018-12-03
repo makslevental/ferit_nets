@@ -14,8 +14,8 @@ from rtree import index as r_index
 from shapely.geometry import MultiPoint
 from sklearn.model_selection import (StratifiedKFold, BaseCrossValidator, LeaveOneGroupOut)
 
-from bro_nets import DEBUG
-from bro_nets.util import *
+from bro_nets.config import DEBUG, N_STRAT_SPLITS, PROJECT_ROOT
+from bro_nets.util import map, zip, filter
 from bro_nets.visualization import plot_cv_indices, visualize_groups
 
 pp = PrettyPrinter(indent=2)
@@ -117,7 +117,6 @@ def create_cross_val_splits(n_splits: int,
                             cv: BaseCrossValidator,
                             alarms: pd.DataFrame,
                             dfidxs_grpids: List[Tuple[int, AlarmGroupId]],
-                            groups=None
                             ) -> List[CrossValSplit]:
     grp_szs = Counter(map(itemgetter(1), dfidxs_grpids))
 
@@ -350,7 +349,7 @@ def vis_crossv_folds(cross_val_splits: List[CrossValSplit], dfs_groups: List[Tup
     plot_cv_indices(cross_val_splits, dfs_groups, alarms, cv)
 
 
-def region_and_stratified(alarms: pd.DataFrame, n_splits_region, n_splits_stratified):
+def region_and_stratified(alarms: pd.DataFrame, n_splits_stratified):
     rgn_splits, rgn_alarms, rgn_groups_dfs, rgn_dfs_groups = logo_region_splits(alarms)
     if DEBUG:
         vis_crossv_folds(rgn_splits, rgn_dfs_groups, rgn_alarms, 'region logo fold')
@@ -377,15 +376,13 @@ if __name__ == '__main__':
 
     # add ch to logger
     logger.addHandler(ch)
-    root = os.getcwd()
     # tuf_table_file_name = 'small_maxs_table.csv'
     # tuf_table_file_name = 'medium_maxs_table.csv'
     tuf_table_file_name = 'big_maxs_table.csv'
     # tuf_table_file_name = 'bigger_maxs_table.csv'
     # tuf_table_file_name = 'even_bigger_maxs_table.csv'
     # tuf_table_file_name = 'all_maxs.csv'
-    all_alarms = tuf_table_csv_to_df(os.path.join(root, tuf_table_file_name))
+    all_alarms = tuf_table_csv_to_df(os.path.join(PROJECT_ROOT, tuf_table_file_name))
 
-    for _ in region_and_stratified(all_alarms, n_splits_region=3, n_splits_stratified=30):
+    for _ in region_and_stratified(all_alarms, n_splits_stratified=N_STRAT_SPLITS):
         continue
-
