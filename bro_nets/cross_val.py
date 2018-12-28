@@ -1,36 +1,26 @@
 import itertools
+import logging
 import operator
-
 import os
 from collections import defaultdict, Counter
 from functools import reduce
 from operator import itemgetter
-from typing import List, Tuple, Optional, Dict, Union, NewType
-from sklearn.model_selection import (StratifiedKFold, KFold, GroupKFold, BaseCrossValidator, GroupShuffleSplit,
-                                     StratifiedShuffleSplit, ShuffleSplit, RepeatedKFold, RepeatedStratifiedKFold,
-                                     LeaveOneGroupOut, LeavePGroupsOut)
-from rtree import index as r_index
-import numpy as np
-# from numba import jit
-import pandas as pd
-from bro_nets.visualization import plot_cv_indices, visualize_groups
 from pprint import PrettyPrinter
+from typing import List, Tuple, Optional, Union
+
+import numpy as np
+import pandas as pd
+from rtree import index as r_index
 from shapely.geometry import MultiPoint
+from sklearn.model_selection import (StratifiedKFold, BaseCrossValidator, LeaveOneGroupOut)
 
-from bro_nets.util import *
-from bro_nets import DEBUG
-
-import logging
+from bro_nets.config import DEBUG, N_STRAT_SPLITS, PROJECT_ROOT
+from bro_nets.util import map, zip, filter
+from bro_nets.visualization import plot_cv_indices, visualize_groups
 
 pp = PrettyPrinter(indent=2)
 
-
-# @jit(nopython=True, parallel=True)
-def corners_to_tuple(corners: pd.DataFrame) -> Optional[List[Tuple]]:
-    corners = filter(None, corners)
-    num_corners = len(corners)
-    corner_tuples = tuple(zip(corners[:num_corners // 2], corners[num_corners // 2:]))
-    return corner_tuples if len(corner_tuples) else None
+logger = logging.Logger(__name__)
 
 
 def tuf_table_csv_to_df(fp) -> pd.DataFrame:
@@ -38,11 +28,19 @@ def tuf_table_csv_to_df(fp) -> pd.DataFrame:
 
     df = df.where((pd.notnull(df)), None)
 
-    corners_names = filter(lambda x: 'corner_' in x, df.columns)
-    if len(corners_names):
-        df['corners'] = df[corners_names].apply(corners_to_tuple, axis=1)
-        df.drop(corners_names, inplace=True, axis=1)
-    if len(filter(lambda x: 'UTM' in x, df.columns)):
+    def crnrs_to_tpl(crnrs: pd.DataFrame) -> Optional[List[Tuple]]:
+        crnrs = filter(None, crnrs)
+        n_crnrs = len(crnrs)
+        crnr_tpls = tuple(zip(crnrs[:n_crnrs // 2], crnrs[n_crnrs // 2:]))
+        return crnr_tpls if len(crnr_tpls) else None
+
+    crnrs_cols = filter(lambda x: 'corner_' in x, df.columns)
+
+    if len(crnrs_cols):
+        df['corners'] = df[crnrs_cols].apply(crnrs_to_tpl, axis=1)
+        df.drop(crnrs_cols, inplace=True, axis=1)
+
+    if 'xUTM' in df.columns and 'yUTM' in df.columns:
         df['utm'] = df[['xUTM', 'yUTM']].apply(lambda u: (u.xUTM, u.yUTM), axis=1)
         df.drop(['xUTM', 'yUTM'], inplace=True, axis=1)
 
@@ -68,149 +66,134 @@ CrossValSplit = Tuple[pd.DataFrame, pd.DataFrame]
 
 
 def group_alarms_by(alarms: pd.DataFrame,
-                    attrs: List[str] = None,
-                    group_attrs: List[str] = None
+                    groupby_attrs: List[str] = None,
+                    group_assign_attrs: List[str] = None
                     ) -> Tuple[AlarmGroups, pd.DataFrame]:
-    if attrs is None: attrs = ['srid', 'target', 'depth', 'corners']
+    if groupby_attrs is None: groupby_attrs = ['srid', 'target', 'depth', 'corners']
 
     alarms = alarms.copy(deep=True)
 
-    assert set(attrs) <= set(alarms.columns)
+    assert set(groupby_attrs) <= set(alarms.columns)
 
-    if 'corners' in attrs and isinstance(alarms.loc[0]['corners'], list):
+    if 'corners' in groupby_attrs and isinstance(alarms.loc[0]['corners'], list):
         raise Exception("didn't cast corners to tuples")
 
-    if group_attrs:
-        assert set(group_attrs) <= set(attrs), f'group attr not in groupby attrs {group_attrs} {attrs}'
-    group_idx_attr_map = {attr: i for i, attr in enumerate(attrs)}
+    if group_assign_attrs:
+        assert set(group_assign_attrs) <= set(groupby_attrs), \
+            f'group assign attrs not in groupby attrs {group_assign_attrs} {groupby_attrs}'
 
-    alarms.sort_values(attrs, inplace=True, na_position='last')
+    alarms.sort_values(groupby_attrs, inplace=True, na_position='last')
     alarms.reset_index(inplace=True, drop=True)
 
-    assert not alarms[attrs].isnull().values.any(), f'null values in table in groupby columns {attrs}'
+    assert not alarms[groupby_attrs].isnull().values.any(), f'null values in table in groupby columns {groupby_attrs}'
 
-    gb = alarms.groupby(attrs, sort=False)
+    gb = alarms.groupby(groupby_attrs, sort=False)
     groups = list(gb)
 
-    if group_attrs:
-        groups_dfidxs = []
-        for group_tuple, group in groups:
-            groupid = tuple([group_tuple[group_idx_attr_map[group_attr]] for group_attr in group_attrs])
-            groups_dfidxs.append((groupid, group.index))
+    if group_assign_attrs:
+        groupids_dfidxs = []
+        groupidx_attr_map = {attr: i for i, attr in enumerate(groupby_attrs)}
+        for groupid_tuple, group in groups:
+            groupid = tuple(
+                groupid_tuple[groupidx_attr_map[group_attr]] for group_attr in group_assign_attrs
+            )
+            groupids_dfidxs.append((groupid, group.index))
     else:
-        groups_dfidxs = [(groupid, group.index) for groupid, (_, group) in enumerate(groups)]
+        groupids_dfidxs = [(groupid, group.index) for groupid, (_, group) in enumerate(groups)]
 
-    dfidxs_groups = []
-    for groupid, dfidxs in groups_dfidxs:
-        dfidxs_groups.extend([(idx, groupid) for idx in dfidxs])
+    dfidxs_groupids = []
+    for groupid, dfidxs in groupids_dfidxs:
+        dfidxs_groupids.extend([(idx, groupid) for idx in dfidxs])
 
-    if DEBUG:
-        alarms['corners'] = alarms['corners'].map(list, na_action='ignore')
+    assert len(alarms) == sum(map(len, map(itemgetter(1), groupids_dfidxs))), \
+        f'mismatched size {len(alarms), sum(map(len, map(itemgetter(1), groupids_dfidxs)))}'
+    assert len(alarms) == len(dfidxs_groupids), f'mismatched size {len(alarms), len(dfidxs_groupids)}'
+    assert all(map(itemgetter(0), dfidxs_groupids) == alarms.index)
 
-    assert len(alarms) == sum(map(len, map(itemgetter(1), groups_dfidxs))), \
-        f'mismatched size {len(alarms), sum(map(len, map(itemgetter(1), groups_dfidxs)))}'
-    assert len(alarms) == len(dfidxs_groups), f'mismatched size {len(alarms), len(dfidxs_groups)}'
-    assert all(map(itemgetter(0), dfidxs_groups) == alarms.index)
-
-    return (groups_dfidxs, dfidxs_groups), alarms
+    return (groupids_dfidxs, dfidxs_groupids), alarms
 
 
 def create_cross_val_splits(n_splits: int,
                             cv: BaseCrossValidator,
                             alarms: pd.DataFrame,
-                            dfidxs_groups: List[Tuple[int, AlarmGroupId]],
-                            groups=None
+                            dfidxs_grpids: List[Tuple[int, AlarmGroupId]],
                             ) -> List[CrossValSplit]:
-    group_sizes = Counter(map(itemgetter(1), dfidxs_groups))
+    grp_szs = Counter(map(itemgetter(1), dfidxs_grpids))
+
+    train = [(df_idx, groupid) for df_idx, groupid in dfidxs_grpids if grp_szs[groupid] >= n_splits]
+
+    if len(train) == 0:
+        raise Exception(f'no groups with at least {n_splits} alarms: {grp_szs}')
+    else:
+        train_xs = np.asarray(map(itemgetter(0), train))
+        train_groups = np.asarray(map(lambda e: '_'.join(map(str, e[1])), train))
+        cv_iter = cv.split(
+            X=train_xs,
+            y=train_groups,
+            groups=train_groups
+        )
 
     # if number of instances/grouping is less than the number of folds then you can't distribute across the folds evenly
-    not_enough = [(df_idx, groupid) for df_idx, groupid in dfidxs_groups if group_sizes[groupid] < n_splits]
-    if getattr(cv, 'shuffle', None): np.random.shuffle(not_enough)
-    not_enough_splits = np.array_split(map(itemgetter(0), not_enough), n_splits)
+    not_enough = [(df_idx, groupid) for df_idx, groupid in dfidxs_grpids if grp_szs[groupid] < n_splits]
+    if len(not_enough) > 0:
+        not_enough_xs = np.asarray(map(itemgetter(0), not_enough))
+        if getattr(cv, 'shuffle', False): np.random.shuffle(not_enough_xs)
+        len_t = len(train_xs)
+        assert not set(train_xs) & set(not_enough_xs)
+        train_xs = np.hstack([train_xs, not_enough_xs])
 
-    if len(not_enough):
-        not_enough_counts = ",".join([str(gid) for gid in group_sizes if group_sizes[gid] < n_splits])
-        logging.info(f'groups with not enough for n={n_splits}: {not_enough_counts}')
+        splits = np.array_split(range(len(not_enough_xs)), n_splits)
+        if getattr(cv, 'shuffle', False): np.random.shuffle(splits)
 
-    enough = [(df_idx, groupid) for df_idx, groupid in dfidxs_groups if group_sizes[groupid] >= n_splits]
-    enough_xs = np.asarray(map(itemgetter(0), enough))
-    enough_groups = np.asarray(map(lambda e: '_'.join(map(str, e[1])), enough))
-    if len(set(enough_groups)) == 0:
-        raise Exception(f'no groups with {n_splits}: {group_sizes}')
-    elif len(set(enough_groups)) < n_splits:
-        warn_msg = f'not enough groups {len(set(enough_groups))} for splits {n_splits}\n using kfold \n'
-        logging.warning(warn_msg)
-        cv_iter = KFold(n_splits=n_splits).split(enough_xs)
-    else:
-        cv_iter = cv.split(
-            X=enough_xs,
-            y=enough_groups,
-            groups=groups or enough_groups
+        cv_iter = (
+            # indices from not_enough actually point to behind/infront/whatever you want to call it
+            # of train_xs, so increment them all by len_t (the length of train_xs)
+            (np.hstack([tr1, len_t + tr2]), np.hstack([tt1, len_t + tt2])) for ((tr1, tt1), (tr2, tt2)) in
+            zip(cv_iter, ((np.hstack(splits[:i] + splits[i + 1:]), splits[i]) for i in range(n_splits)))
         )
 
     alarm_splits = []
     # these are indices in enough_group_xs not in the dataframe (because that's how sklearn works)
-    for i, (enough_train_idxs, enough_test_idxs) in enumerate(cv_iter):
+    for i, (train_idxs, test_idxs) in enumerate(cv_iter):
         # these are now indices in the dataframe
+        train_dfidxs, test_dfidxs = train_xs[train_idxs], train_xs[test_idxs]
 
-        if DEBUG:
-            train_counts, test_counts = Counter(enough_groups[enough_train_idxs]), Counter(
-                enough_groups[enough_test_idxs])
-            total_train, total_test = sum(train_counts.values()), sum(test_counts.values())
-            for key in train_counts:
-                train_counts[key] /= total_train
+        assert not set(train_dfidxs) & set(test_dfidxs)
 
-            for key in test_counts:
-                test_counts[key] /= total_test
-
-            for key in train_counts:
-                logging.debug(key, train_counts[key] - test_counts[key])
-
-        enough_train_df_idxs, enough_test_df_idxs = enough_xs[enough_train_idxs], enough_xs[enough_test_idxs]
-
-        j = i % n_splits
-        not_enough_group_train_idxs = np.hstack(not_enough_splits[:j] + not_enough_splits[j + 1:])
-        not_enough_group_test_idxs = not_enough_splits[j]
-
-        assert not set(enough_train_df_idxs) & set(not_enough_group_train_idxs)
-        train_idxs = np.hstack([enough_train_df_idxs, not_enough_group_train_idxs])
-        assert not set(enough_train_df_idxs) & set(not_enough_group_train_idxs)
-        test_idxs = np.hstack([enough_test_df_idxs, not_enough_group_test_idxs])
-
-        assert not set(train_idxs) & set(test_idxs)
-
-        train_df = alarms.loc[train_idxs]
+        train_df = alarms.loc[train_dfidxs]
         train_df.index = train_df.index.map(int)
-        test_df = alarms.loc[test_idxs]
+        test_df = alarms.loc[test_dfidxs]
         test_df.index = test_df.index.map(int)
 
         alarm_splits.append((train_df, test_df))
-        # yield train_df, test_df
+
     return alarm_splits
 
 
 def group_false_alarms(all_false_alarms: pd.DataFrame) -> Tuple[AlarmGroups, pd.DataFrame]:
-    (false_alarm_groups, _), grouped_false_alarms = group_alarms_by(all_false_alarms, attrs=['srid', 'site'],
-                                                                    group_attrs=['site'])
+    (falrmgrpids_dfidxs, _), grpdfalrmsdf = group_alarms_by(
+        all_false_alarms,
+        groupby_attrs=['srid', 'site'],
+        group_assign_attrs=['site']
+    )
 
-    # assert len(all_false_alarms) == sum(map(lambda g: sum(map(len, g[1])), false_alarm_groups)), \
-    #     f'mismatched size {len(all_false_alarms), sum(map(lambda g: sum(map(len, g[1])), false_alarm_groups))}'
-
-    groups_dfidxs = []
-    dfidxs_groups = []
-    # current group id is probably site
-    for groupid, group_dfidxs in false_alarm_groups:
-        instance_rows_utm = grouped_false_alarms.loc[group_dfidxs]['utm']
+    grpids_dfidxs = []
+    dfidxs_grpids = []
+    for groupid, dfidxs in falrmgrpids_dfidxs:
+        instance_rows_utms = grpdfalrmsdf.loc[dfidxs]['utm']
         r_idx = r_index.Index()
         groupid = (f'{"_".join(groupid)}_miss',)
 
-        for instance_dfidx, utm in instance_rows_utm.iteritems():
-            r_idx.insert(instance_dfidx, utm + utm)  # hack to insert a point
+        for instance_dfidx, utm in instance_rows_utms.iteritems():
+            r_idx.insert(
+                instance_dfidx,
+                utm + utm  # hack to insert a point
+            )
 
         grouped_idxs = set()
         near_dfidxs = []
 
-        for dfidx, utm in instance_rows_utm.iteritems():
+        for dfidx, utm in instance_rows_utms.iteritems():
             if dfidx not in grouped_idxs:
                 # 0,0, 60, 60, minx, miny, maxx, maxy
                 utmx, utmy = utm
@@ -222,39 +205,29 @@ def group_false_alarms(all_false_alarms: pd.DataFrame) -> Tuple[AlarmGroups, pd.
                 grouped_idxs.update(near_points_idxs)
                 near_dfidxs.append(list(ungrouped_idxs))
 
-                dfidxs_groups.extend(
+                dfidxs_grpids.extend(
                     [(dfidx, groupid) for dfidx in ungrouped_idxs]
                 )
 
-                near_utms = instance_rows_utm.loc[ungrouped_idxs].values
-                logging.debug('convex hull area', f'{"_".join(groupid)}_miss',
-                              MultiPoint(near_utms).convex_hull.area)
+                near_utms = instance_rows_utms.loc[ungrouped_idxs].values
+                if DEBUG:
+                    logger.debug(
+                        f'convex hull area for {"_".join(groupid)}_miss: {MultiPoint(near_utms).convex_hull.area}'
+                    )
 
-        groups_dfidxs.append((groupid, pd.Index(near_dfidxs)))
+        grpids_dfidxs.append((groupid, pd.Index(near_dfidxs)))
 
-        # for (leaf_id, dfidxs, coords) in r_idx.leaves():
-        #     dfidxs_groups.extend(
-        #         [(dfidx, groupid) for dfidx in dfidxs]
-        #     )
-        #     near_dfidxs.append(dfidxs)
-        #
-        #     near_utms = df.loc[dfidxs]['utm'].values
-        #     logging.debug('convex hull area', f'{"_".join(groupid)}_miss_{leaf_id}', MultiPoint(near_utms).convex_hull.area)
+    assert len(all_false_alarms) == sum(map(lambda g: sum(map(len, g[1])), grpids_dfidxs)), \
+        f'mismatched size {len(all_false_alarms), sum(map(lambda g: sum(map(len, g[1])), grpids_dfidxs))}'
+    assert len(all_false_alarms) == len(dfidxs_grpids), \
+        f'mismatched size {len(all_false_alarms), len(dfidxs_grpids)}'
 
-        # assert sum(map(len, near_dfidxs)) == len(dfidx), f'mismatch {sum(map(len, near_dfidxs)), len(dfidx)}'
-        # assert len(grouped_idxs) == len(dfidx), f'mistmatch {sum(map(len, near_dfidxs)), len(dfidx)}'
+    for groupid, dfidxs in grpids_dfidxs:
+        logger.info(f'group {groupid} # alarms {len(dfidxs)}')
 
-    # assert len(all_false_alarms) == sum(map(lambda g: sum(map(len, g[1])), groups_dfidxs)), \
-    #     f'mismatched size {len(all_false_alarms), sum(map(lambda g: sum(map(len, g[1])), groups_dfidxs))}'
-    # assert len(all_false_alarms) == len(dfidxs_groups), f'mismatched size {len(all_false_alarms), len(dfidxs_groups)}'
-
-    for groupid, group_dfidxs in groups_dfidxs:
-        logging.debug(f'group {groupid} # alarms {len(group_dfidxs)}')
-
-    return (groups_dfidxs, dfidxs_groups), grouped_false_alarms
+    return (grpids_dfidxs, dfidxs_grpids), grpdfalrmsdf
 
 
-# @jit(nopython=True)
 def join_cross_val_splits(cv_splits_1: List[CrossValSplit],
                           alarms_1: pd.DataFrame,
                           dfidxs_groups_1: List[Tuple[int, AlarmGroupId]],
@@ -265,62 +238,38 @@ def join_cross_val_splits(cv_splits_1: List[CrossValSplit],
     List[CrossValSplit], pd.DataFrame, List[GroupedAlarms], List[Tuple[int, AlarmGroupId]]]:
     assert len(cv_splits_1) == len(cv_splits_2)
 
-    # TODO: figure out whether there's a way to make this work (probably not because you lose index/group info
-    # if not DEBUG:
-    #     concat_alarms = pd.concat([alarms_1, alarms_2], ignore_index=True)
-    #     cv_splits = []
-    #     for i in range(len(cv_splits_1)):
-    #         train_1, test_1 = cv_splits_1[i]
-    #         train_2, test_2 = cv_splits_2[i]
-    #         train, test = pd.concat([train_1, train_2], ignore_index=True), pd.concat([test_1, test_2],
-    #                                                                                   ignore_index=True)
-    #         cv_splits.append((train, test))
-    #
-    #     new_groups_dfidxs = {(i,): [None] for i in range(len(concat_alarms))}
-    #     new_dfidxs_groups = [((i,), [None]) for i in range(len(concat_alarms))]
-    #
-    # return (
-    #     cv_splits,
-    #     concat_alarms.reset_index(drop=True),
-    #     reduce(
-    #         operator.concat,
-    #         map(lambda g_d: [*itertools.product(['_'.join(map(str, g_d[0]))], g_d[1])], new_groups_dfidxs.items()),
-    #     ),
-    #     new_dfidxs_groups
-    # )
+    concat_alrms = pd.concat(
+        [alarms_1, alarms_2],
+        keys=['alarms_1', 'alarms_2'],
+        names=['alarms', 'old_index']
+    )
 
-    concat_alarms = pd.concat([alarms_1, alarms_2], keys=['alarms_1', 'alarms_2'],
-                              names=['alarms', 'old_index'])
+    alrms_1_new_idx = concat_alrms.index.get_locs([['alarms_1'], alarms_1.index])
+    alrms_2_new_idx = concat_alrms.index.get_locs([['alarms_2'], alarms_2.index])
 
-    alarms_1_new_idx = concat_alarms.index.get_locs([['alarms_1'], alarms_1.index])
-    alarms_2_new_idx = concat_alarms.index.get_locs([['alarms_2'], alarms_2.index])
+    dfidxs_grpids_1_map = dict(dfidxs_groups_1)
+    dfidxs_grpids_2_map = dict(dfidxs_groups_2)
 
-    dfidxs_groups_1_map = dict(dfidxs_groups_1)
-    dfidxs_groups_2_map = dict(dfidxs_groups_2)
+    new_dfidxs_grpids = []
+    new_grpids_dfidxs = defaultdict(lambda: pd.Index([]))
 
-    new_dfidxs_groups = []
-    new_groups_dfidxs = defaultdict(lambda: pd.Index([]))
-
-    for new_idx, old_idx in zip(alarms_1_new_idx, alarms_1.index):
-        new_dfidxs_groups.append((int(new_idx), dfidxs_groups_1_map[old_idx]))
-        new_groups_dfidxs[dfidxs_groups_1_map[old_idx]] = new_groups_dfidxs[dfidxs_groups_1_map[old_idx]].append(
-            pd.Index([new_idx]))
-
-    for new_idx, old_idx in zip(alarms_2_new_idx, alarms_2.index):
-        new_dfidxs_groups.append((int(new_idx), dfidxs_groups_2_map[old_idx]))
-        new_groups_dfidxs[dfidxs_groups_2_map[old_idx]] = new_groups_dfidxs[dfidxs_groups_2_map[old_idx]].append(
-            pd.Index([new_idx]))
+    for alrm_new_idx, alrm_old_idx, dfidx_groupids_map in [(alrms_1_new_idx, alarms_1.index, dfidxs_grpids_1_map),
+                                                           (alrms_2_new_idx, alarms_2.index, dfidxs_grpids_2_map)]:
+        for new_idx, old_idx in zip(alrm_new_idx, alrm_old_idx):
+            grp_id = dfidx_groupids_map[old_idx]
+            new_dfidxs_grpids.append((int(new_idx), grp_id))
+            new_grpids_dfidxs[grp_id] = new_grpids_dfidxs[grp_id].append(pd.Index([new_idx]))
 
     cv_splits = []
     for i in range(len(cv_splits_1)):
         train_1, test_1 = cv_splits_1[i]
         train_2, test_2 = cv_splits_2[i]
 
-        new_train_1_idx = concat_alarms.index.get_locs([['alarms_1'], train_1.index])
-        new_test_1_idx = concat_alarms.index.get_locs([['alarms_1'], test_1.index])
+        new_train_1_idx = concat_alrms.index.get_locs([['alarms_1'], train_1.index])
+        new_test_1_idx = concat_alrms.index.get_locs([['alarms_1'], test_1.index])
 
-        new_train_2_idx = concat_alarms.index.get_locs([['alarms_2'], train_2.index])
-        new_test_2_idx = concat_alarms.index.get_locs([['alarms_2'], test_2.index])
+        new_train_2_idx = concat_alrms.index.get_locs([['alarms_2'], train_2.index])
+        new_test_2_idx = concat_alrms.index.get_locs([['alarms_2'], test_2.index])
 
         train, test = pd.concat([train_1, train_2]), pd.concat([test_1, test_2], ignore_index=True)
         train.index = pd.Index(np.concatenate([new_train_1_idx, new_train_2_idx]))
@@ -330,16 +279,19 @@ def join_cross_val_splits(cv_splits_1: List[CrossValSplit],
 
     return (
         cv_splits,
-        concat_alarms.reset_index(drop=True),
+        concat_alrms.reset_index(drop=True),
         reduce(
             operator.concat,
-            map(lambda g_d: [*itertools.product(['_'.join(map(str, g_d[0]))], g_d[1])], new_groups_dfidxs.items()),
+            map(
+                lambda gid_dfidxs: [*itertools.product(['_'.join(map(str, gid_dfidxs[0]))], gid_dfidxs[1])],
+                new_grpids_dfidxs.items()
+            ),
         ),
-        new_dfidxs_groups
+        new_dfidxs_grpids
     )
 
 
-def split_true_false_alarms(all_alarms: pd.DataFrame):
+def split_t_f_alarms(all_alarms: pd.DataFrame):
     true_alarms = all_alarms[all_alarms['HIT'] == 1].copy(deep=True)
     true_alarms.reset_index(inplace=True, drop=True)
     false_alarms = all_alarms[all_alarms['HIT'] == 0].copy(deep=True)
@@ -347,41 +299,41 @@ def split_true_false_alarms(all_alarms: pd.DataFrame):
     return true_alarms, false_alarms
 
 
-def _splits(cv, alarms: pd.DataFrame, n_splits, attrs, group_attrs, handle_true_false_separately=True) -> Tuple[
+def _splits(cv, alarms: pd.DataFrame, n_splits, attrs, group_attrs, separate_t_f=True) -> Tuple[
     List[CrossValSplit], pd.DataFrame, List[GroupedAlarms], List[Tuple[int, AlarmGroupId]]
 ]:
-    if handle_true_false_separately:
-        true_alarms, false_alarms = split_true_false_alarms(alarms)
+    if separate_t_f:
+        t_alrms_df, f_alrms_df = split_t_f_alarms(alarms)
 
-        (true_alarm_groups_dfs, true_alarm_dfs_groups), grouped_true_alarms = group_alarms_by(true_alarms,
-                                                                                              attrs=attrs,
-                                                                                              group_attrs=group_attrs)
-        (false_alarm_groups_dfs, false_alarm_dfs_groups), grouped_false_alarms = group_false_alarms(false_alarms)
+        (t_alrm_grpids_dfidxs, t_alrm_dfidxs_grpids), grpd_t_alrms_df = group_alarms_by(t_alrms_df,
+                                                                                        groupby_attrs=attrs,
+                                                                                        group_assign_attrs=group_attrs
+                                                                                        )
+        (f_alrm_grpids_dfidxs, f_alrm_dfidxs_grpids), grpd_f_alrms_df = group_false_alarms(f_alrms_df)
 
-        true_alarm_cross_val_splits = create_cross_val_splits(n_splits, cv, grouped_true_alarms, true_alarm_dfs_groups)
-        false_alarm_cross_val_splits = create_cross_val_splits(n_splits, cv, grouped_false_alarms,
-                                                               false_alarm_dfs_groups)
+        t_crs_val_splits = create_cross_val_splits(n_splits, cv, grpd_t_alrms_df, t_alrm_dfidxs_grpids)
+        f_crs_val_splits = create_cross_val_splits(n_splits, cv, grpd_f_alrms_df, f_alrm_dfidxs_grpids)
 
-        alarm_cross_val_splits, alarms, groups_dfs, dfs_groups = join_cross_val_splits(
-            true_alarm_cross_val_splits, grouped_true_alarms, true_alarm_dfs_groups,
-            false_alarm_cross_val_splits, grouped_false_alarms, false_alarm_dfs_groups,
+        crs_val_splits, alarms, grids_dfidxs, dfidxs_grpids = join_cross_val_splits(
+            t_crs_val_splits, grpd_t_alrms_df, t_alrm_dfidxs_grpids,
+            f_crs_val_splits, grpd_f_alrms_df, f_alrm_dfidxs_grpids,
         )
     else:
-        (groups_dfs, dfs_groups), grouped_alarms = group_alarms_by(alarms,
-                                                                   attrs=attrs,
-                                                                   group_attrs=group_attrs)
-        alarm_cross_val_splits = create_cross_val_splits(n_splits, cv, grouped_alarms, dfs_groups)
+        (grids_dfidxs, dfidxs_grpids), grpd_alrms_df = group_alarms_by(alarms,
+                                                                       groupby_attrs=attrs,
+                                                                       group_assign_attrs=group_attrs
+                                                                       )
+        crs_val_splits = create_cross_val_splits(n_splits, cv, grpd_alrms_df, dfidxs_grpids)
 
-    return alarm_cross_val_splits, alarms, groups_dfs, dfs_groups
+    return crs_val_splits, alarms, grids_dfidxs, dfidxs_grpids
 
 
-def logo_region_splits(alarms: pd.DataFrame, n_splits=10) -> Tuple[
+def logo_region_splits(alarms: pd.DataFrame) -> Tuple[
     List[CrossValSplit], pd.DataFrame, List[GroupedAlarms], List[Tuple[int, AlarmGroupId]]
 ]:
-    # cv = LeavePGroupsOut(n_groups=4)
     cv = LeaveOneGroupOut()
-    return _splits(cv, alarms, n_splits, attrs=['srid', 'site', 'lane'], group_attrs=['lane'],
-                   handle_true_false_separately=False)
+    return _splits(cv, alarms, n_splits=10, attrs=['srid', 'site', 'lane'], group_attrs=['lane'],
+                   separate_t_f=False)
 
 
 def kfold_stratified_target_splits(alarms: pd.DataFrame, n_splits=10) -> Tuple[
@@ -397,8 +349,8 @@ def vis_crossv_folds(cross_val_splits: List[CrossValSplit], dfs_groups: List[Tup
     plot_cv_indices(cross_val_splits, dfs_groups, alarms, cv)
 
 
-def region_and_stratified(alarms: pd.DataFrame, n_splits_region, n_splits_stratified):
-    rgn_splits, rgn_alarms, rgn_groups_dfs, rgn_dfs_groups = logo_region_splits(alarms, n_splits_region)
+def region_and_stratified(alarms: pd.DataFrame, n_splits_stratified):
+    rgn_splits, rgn_alarms, rgn_groups_dfs, rgn_dfs_groups = logo_region_splits(alarms)
     if DEBUG:
         vis_crossv_folds(rgn_splits, rgn_dfs_groups, rgn_alarms, 'region logo fold')
 
@@ -410,32 +362,27 @@ def region_and_stratified(alarms: pd.DataFrame, n_splits_region, n_splits_strati
             vis_crossv_folds(strat_splits, strat_dfs_groups, strat_alarms,
                              f'strat {n_splits_stratified} folds region fold {i}')
         yield strat_splits, rgn_train, rgn_test
-        
+
 
 if __name__ == '__main__':
-    root = os.getcwd()
-    tuf_table_file_name = 'small_maxs_table.csv'
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.INFO)
+
+    # create formatter
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+    # add formatter to ch
+    ch.setFormatter(formatter)
+
+    # add ch to logger
+    logger.addHandler(ch)
+    # tuf_table_file_name = 'small_maxs_table.csv'
     # tuf_table_file_name = 'medium_maxs_table.csv'
-    # tuf_table_file_name = 'big_maxs_table.csv'
+    tuf_table_file_name = 'big_maxs_table.csv'
     # tuf_table_file_name = 'bigger_maxs_table.csv'
     # tuf_table_file_name = 'even_bigger_maxs_table.csv'
     # tuf_table_file_name = 'all_maxs.csv'
-    all_alarms = tuf_table_csv_to_df(os.path.join(root, tuf_table_file_name))
-    # region_and_stratified(all_alarms, n_splits_region=3, n_splits_stratified=5)
+    all_alarms = tuf_table_csv_to_df(os.path.join(PROJECT_ROOT, tuf_table_file_name))
 
-    # profile(kfold_region_splits, [all_alarms], {'n_splits': 3})
-    # rgn_splits, rgn_alarms, rgn_groups_dfs, rgn_dfs_groups = logo_region_splits(all_alarms)
-    # for i, (train, test) in enumerate(rgn_splits):
-    #     # train_fn = f'{"_".join(train["lane"].unique())}.csv'.replace(' ', '_')
-    #     # test_fn = f'{"_".join(test["lane"].unique())}.csv'.replace(' ', '_')
-    #     # print(train_fn, '|', test_fn)
-    #     print(len(train), '|', len(test))
-    #     train_fn = f'fold_{i}_train.csv'
-    #     test_fn = f'fold_{i}_test.csv'
-    #     train.to_csv(f'folds/{train_fn}')
-    #     test.to_csv(f'folds/{test_fn}')
-    #     with open(f'folds/fold_{i}.txt', 'w') as f:
-    #         f.write(f'{train_fn}: {len(train)}\n')
-    #         f.write(f'{test_fn}: {len(test)}')
-    #     if len(test) > 4000:
-    #         break
+    for _ in region_and_stratified(all_alarms, n_splits_stratified=N_STRAT_SPLITS):
+        continue

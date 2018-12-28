@@ -1,12 +1,14 @@
 import os
-import torch
+
 import torch.distributed as dist
 from torch.multiprocessing import Process
+
 
 def run(rank, size):
     """ Distributed function to be implemented later. """
     print(rank, size)
     pass
+
 
 def init_processes(rank, size, fn, backend='tcp'):
     """ Initialize the distributed environment. """

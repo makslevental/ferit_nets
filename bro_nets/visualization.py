@@ -1,29 +1,27 @@
-from operator import itemgetter
-
-from matplotlib.patches import Patch, Rectangle
-from matplotlib.colors import Normalize
-
-import numpy as np
-import matplotlib.pyplot as plt
-
-from bro_nets.util import *
-
-from tensorboardX import SummaryWriter
 from datetime import datetime
-
-now = datetime.now()
-
-writer = SummaryWriter(f'logs/{now}/')
+from operator import itemgetter
+from typing import List
 
 import matplotlib as mpl
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.colors import Normalize
+from matplotlib.patches import Patch, Rectangle
+from tensorboardX import SummaryWriter
+
+from bro_nets.test import ROC
 
 mpl.rcParams['figure.dpi'] = 300
 
 cmap_data = plt.cm.Paired
 cmap_cv = plt.cm.coolwarm
 
+now = datetime.now()
 
-def visualize_groups(dfs_groups, alarms, title, lw=50, save=False):
+writer = SummaryWriter(f'logs/{now}/')
+
+
+def visualize_groups(dfs_groups, alarms, title: str, lw=50, save=False):
     # Visualize dataset groups
 
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -77,7 +75,7 @@ def visualize_groups(dfs_groups, alarms, title, lw=50, save=False):
     plt.close(fig)
 
 
-def plot_roc(rocs, aucs, title, save=True):
+def plot_roc(rocs: List[ROC], aucs: List[float], title: str, save=True):
     fig, ax = plt.subplots()
 
     lw = 2
@@ -108,7 +106,6 @@ def plot_cv_indices(splits, dfs_groups, alarms, title, lw=10, save=False):
 
     norm = Normalize(vmin=min(group_color_map) - 100, vmax=max(group_color_map) + 100)
     cmap = plt.cm.ScalarMappable(norm=norm, cmap=cmap_data)
-    colors = map(lambda c: cmap.to_rgba(c), group_color_map)
 
     n_samples = sum(map(len, splits[0]))
     n_splits = len(splits)
