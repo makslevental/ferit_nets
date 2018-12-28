@@ -3,6 +3,7 @@ import os
 import time
 from collections import defaultdict
 from operator import itemgetter
+import matplotlib.pyplot as plt
 
 import torch
 from bro_nets.models427 import GPR_15_300
@@ -135,7 +136,7 @@ def test_with_saved():
     def load_net(i):
         net = GPR_15_300()
         net.cuda()
-        state_dict = torch.load(f'net_fold_{i}.pth')
+        state_dict = torch.load(f'/home/maksim/ferit_nets/net_fold_{i}.pth')
         new_dict = {}
         for k, v in state_dict.items():
             new_dict[k.replace('module.', '')] = v
@@ -147,26 +148,26 @@ def test_with_saved():
     for i, net in enumerate(nets):
         roc, auc, labels_confs = test(net, region_test_dl)
         netrocs_netaucs_labelsconfs.append((roc, auc, labels_confs))
-    #     plot_roc(
-    #         [('net', roc),
-    #          ('prescreener', prescreener_roc)],
-    #         [auc, prescreener_auc],
-    #         f'holdout roc fold {i}'
-    #     )
-    # confs = map(lambda x: x[2][1], netrocs_netaucs_labelsconfs)
-    # gm = np.mean(np.stack(confs), axis=0)
-    # # labels = map(lambda x: x[2][0], netrocs_netaucs_labelsconfs)
-    # labels = netrocs_netaucs_labelsconfs[0][2][0]
-    #
-    # net_roc = roc_curve(labels, gm)
-    # net_auc = roc_auc_score(labels, gm)
-    #
-    # plot_roc(
-    #     [('net', net_roc),
-    #      ('prescreener', prescreener_roc)],
-    #     [net_auc, prescreener_auc],
-    #     f'ensemble roc'
-    # )
+        plot_roc(
+            [('net', roc),
+             ('prescreener', prescreener_roc)],
+            [auc, prescreener_auc],
+            f'holdout roc fold {i}'
+        )
+    confs = map(lambda x: x[2][1], netrocs_netaucs_labelsconfs)
+    gm = np.mean(np.stack(confs), axis=0)
+    # labels = map(lambda x: x[2][0], netrocs_netaucs_labelsconfs)
+    labels = netrocs_netaucs_labelsconfs[0][2][0]
+
+    net_roc = roc_curve(labels, gm)
+    net_auc = roc_auc_score(labels, gm)
+
+    plot_roc(
+        [('net', net_roc),
+         ('prescreener', prescreener_roc)],
+        [net_auc, prescreener_auc],
+        f'ensemble roc'
+    )
 
     print(time.time() - start)
     return netrocs_netaucs_labelsconfs, prescreener_roc, prescreener_auc
@@ -184,6 +185,14 @@ def prescreener_roc():
         [prescreener_auc],
         f'F1V4p4v3'
     )
+
+def histograms(confs, labels, title):
+    n, bins, patches = plt.hist(np.asarray(confs)[map(bool, labels)], 100, density=False, facecolor='g', alpha=0.75, label='true')
+    n, bins, patches = plt.hist(np.asarray(confs)[map(lambda x: not bool(x), labels)], 100, density=False, facecolor='b', alpha=0.75, label='false')
+    plt.title(title)
+    plt.legend()
+    plt.grid(True)
+    plt.show()
 
 def test_with_cross_val(alarms):
     root = '/home/maksim/ferit_nets'
@@ -250,11 +259,19 @@ def test_with_cross_val(alarms):
         # )
 
 
+def plot_hists_saved():
+    res = test_with_saved()
+    confs = map(lambda x: x[2][1], res[0])
+    labels = map(lambda x: x[2][0], res[0])
+    for i in range(len(confs)):
+        histograms(confs[i], labels[i], f'net {i}')
+
+
 if __name__ == '__main__':
     root = os.getcwd()
     tuf_table_file_name = 'all_maxs.csv'
     # all_alarms = tuf_table_csv_to_df(os.path.join(root, tuf_table_file_name))
     # test_with_cross_val(all_alarms)
-    test_fold_0()
+    # test_fold_0()
     # prescreener_roc()
-    # res = test_with_saved()
+    plot_hists_saved()
