@@ -8,11 +8,11 @@ import torch.nn.functional as torch_f
 from sklearn.metrics import roc_curve, roc_auc_score
 from torch.utils.data import DataLoader
 
+from bro_nets import ROC
 from bro_nets.config import TORCH_DEVICE
 from bro_nets.cross_val import tuf_table_csv_to_df
 from bro_nets.visualization import plot_roc
 
-ROC = Tuple[np.ndarray, np.ndarray, np.ndarray]
 
 def test(net: torch.nn.Module, testloader: DataLoader) -> Tuple[
     ROC, float, Tuple[np.ndarray, np.ndarray]

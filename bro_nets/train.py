@@ -4,19 +4,23 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from bro_nets.config import TORCH_DEVICE, OPTIMIZER, SCHEDULER, DATA_ROOT, BATCH_SIZE, SHUFFLE_DL, EPOCHS
+from bro_nets.config import TORCH_DEVICE, DATA_ROOT, BATCH_SIZE, SHUFFLE_DL, EPOCHS, OPTIMIZER, SCHEDULER, CRITERION
 from bro_nets.cross_val import tuf_table_csv_to_df
 from bro_nets.data import AlarmDataset
 from bro_nets.models427 import GPR_15_300
 from bro_nets.visualization import writer
 
 
-def train(net: torch.nn.Module, dataloader: DataLoader, epochs=10) -> torch.nn.Module:
+def train(
+        net: torch.nn.Module,
+        dataloader: DataLoader,
+        criterion,  # torch.nn._Loss
+        optimizer: torch.optim.Optimizer,
+        scheduler: torch.optim.lr_scheduler._LRScheduler,
+        epochs=10,
+) -> torch.nn.Module:
     net.to(TORCH_DEVICE, dtype=torch.float)
 
-    criterion = torch.nn.CrossEntropyLoss()
-    optimizer = OPTIMIZER(net)
-    scheduler = SCHEDULER(optimizer, dataloader)
     i = 0
     for epoch in range(epochs):  # loop over the dataset multiple times
         for j, (inputs, labels) in enumerate(dataloader):
@@ -51,5 +55,15 @@ if __name__ == '__main__':
     ad = AlarmDataset(all_alarms, DATA_ROOT)
     adl = DataLoader(ad, BATCH_SIZE, SHUFFLE_DL)
     net = torch.nn.DataParallel(GPR_15_300())
-    net = train(net, adl, epochs=EPOCHS)
+
+    optim = OPTIMIZER(net)
+    sched = SCHEDULER(optim, adl)
+    net = train(
+        net,
+        adl,
+        criterion=CRITERION,
+        optimizer=optim,
+        scheduler=sched,
+        epochs=EPOCHS
+    )
     # print(net.state_dict())

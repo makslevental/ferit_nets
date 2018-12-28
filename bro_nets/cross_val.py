@@ -6,7 +6,7 @@ from collections import defaultdict, Counter
 from functools import reduce
 from operator import itemgetter
 from pprint import PrettyPrinter
-from typing import List, Tuple, Optional, Union
+from typing import List, Tuple, Optional
 
 import numpy as np
 import pandas as pd
@@ -14,6 +14,7 @@ from rtree import index as r_index
 from shapely.geometry import MultiPoint
 from sklearn.model_selection import (StratifiedKFold, BaseCrossValidator, LeaveOneGroupOut)
 
+from bro_nets import AlarmGroups, AlarmGroupId, CrossValSplit, GroupedAlarms
 from bro_nets.config import DEBUG, N_STRAT_SPLITS, PROJECT_ROOT
 from bro_nets.util import map, zip, filter
 from bro_nets.visualization import plot_cv_indices, visualize_groups
@@ -58,11 +59,6 @@ def tuf_table_csv_to_df(fp) -> pd.DataFrame:
     return df
 
 
-AlarmGroupId = Union[Tuple, int]
-GroupedAlarms = Tuple[AlarmGroupId, pd.Int64Index]
-AlarmGroups = Tuple[List[GroupedAlarms], List[Tuple[int, AlarmGroupId]]]
-
-CrossValSplit = Tuple[pd.DataFrame, pd.DataFrame]
 
 
 def group_alarms_by(alarms: pd.DataFrame,

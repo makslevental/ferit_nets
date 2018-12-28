@@ -9,7 +9,7 @@ from matplotlib.colors import Normalize
 from matplotlib.patches import Patch, Rectangle
 from tensorboardX import SummaryWriter
 
-from bro_nets.test import ROC
+from bro_nets import ROC
 
 mpl.rcParams['figure.dpi'] = 300
 

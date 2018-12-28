@@ -1,0 +1,18 @@
+Host horovod0
+    HostName 172.18.0.53
+    Port 12345
+    User root
+    IdentityFile ~/.ssh/id_rsa
+
+Host horovod1
+    HostName 172.18.0.57
+    Port 12345
+    User root
+    IdentityFile ~/.ssh/id_rsa
+
+Host horovod2
+    HostName 172.18.0.58
+    Port 12345
+    User root
+    IdentityFile ~/.ssh/id_rsa
+
