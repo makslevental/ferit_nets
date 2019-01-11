@@ -1,4 +1,4 @@
-name: bro_nets
+name: tuf_torch
 channels:
   - conda-forge
   - pytorch
@@ -121,5 +121,4 @@ dependencies:
     - tzlocal==1.5.1
     - websocket-client==0.51.0
     - whichcraft==0.4.1
-prefix: /home/maksim/anaconda3/envs/bro_nets
 

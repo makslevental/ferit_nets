@@ -8,8 +8,8 @@ import torch.serialization
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 
-from bro_nets.config import DEBUG, DATA_ROOT, PROJECT_ROOT, BATCH_SIZE, SHUFFLE_DL
-from bro_nets.cross_val import tuf_table_csv_to_df
+from tuf_torch.config import DEBUG, DATA_ROOT, PROJECT_ROOT, BATCH_SIZE, SHUFFLE_DL
+from tuf_torch.cross_val import tuf_table_csv_to_df
 
 
 def compute_normalization(dataset: Dataset):
