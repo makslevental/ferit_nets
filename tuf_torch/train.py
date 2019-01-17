@@ -4,11 +4,11 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from bro_nets.config import TORCH_DEVICE, DATA_ROOT, BATCH_SIZE, SHUFFLE_DL, EPOCHS, OPTIMIZER, SCHEDULER, CRITERION
-from bro_nets.cross_val import tuf_table_csv_to_df
-from bro_nets.data import AlarmDataset
-from bro_nets.models427 import GPR_15_300
-from bro_nets.visualization import writer
+from tuf_torch.config import TORCH_DEVICE, DATA_ROOT, BATCH_SIZE, SHUFFLE_DL, EPOCHS, OPTIMIZER, SCHEDULER, CRITERION
+from tuf_torch.cross_val import tuf_table_csv_to_df
+from tuf_torch.data import AlarmDataset
+from tuf_torch.models427 import GPR_15_300
+from tuf_torch.visualization import writer
 
 
 def train(

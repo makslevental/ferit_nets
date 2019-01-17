@@ -11,10 +11,10 @@ from rtree import index as r_index
 from shapely.geometry import MultiPoint
 from sklearn.model_selection import (StratifiedKFold, BaseCrossValidator, LeaveOneGroupOut)
 
-from bro_nets import GroupedAlarms, AlarmGroupId, CrossValSplit, GroupedAlarm, GroupedAlarmIndex
-from bro_nets.config import DEBUG, N_STRAT_SPLITS, PROJECT_ROOT
-from bro_nets.util import map, zip, filter
-from bro_nets.visualization import plot_cv_indices, visualize_groups
+from tuf_torch import GroupedAlarms, AlarmGroupId, CrossValSplit, GroupedAlarm, GroupedAlarmIndex
+from tuf_torch.config import DEBUG, N_STRAT_SPLITS, PROJECT_ROOT
+from tuf_torch.util import map, zip, filter
+from tuf_torch.visualization import plot_cv_indices, visualize_groups
 
 pp = PrettyPrinter(indent=2)
 
