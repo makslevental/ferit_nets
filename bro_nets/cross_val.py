@@ -1,10 +1,7 @@
-import itertools
 import logging
-import operator
 import os
 from collections import defaultdict, Counter
-from functools import reduce
-from operator import itemgetter
+from operator import attrgetter as attrg
 from pprint import PrettyPrinter
 from typing import List, Tuple, Optional
 
@@ -14,7 +11,7 @@ from rtree import index as r_index
 from shapely.geometry import MultiPoint
 from sklearn.model_selection import (StratifiedKFold, BaseCrossValidator, LeaveOneGroupOut)
 
-from bro_nets import AlarmGroups, AlarmGroupId, CrossValSplit, GroupedAlarms
+from bro_nets import GroupedAlarms, AlarmGroupId, CrossValSplit, GroupedAlarm, GroupedAlarmIndex
 from bro_nets.config import DEBUG, N_STRAT_SPLITS, PROJECT_ROOT
 from bro_nets.util import map, zip, filter
 from bro_nets.visualization import plot_cv_indices, visualize_groups
@@ -24,7 +21,7 @@ pp = PrettyPrinter(indent=2)
 logger = logging.Logger(__name__)
 
 
-def tuf_table_csv_to_df(fp) -> pd.DataFrame:
+def tuf_table_csv_to_df(fp: str) -> pd.DataFrame:
     df = pd.read_csv(fp)
 
     df = df.where((pd.notnull(df)), None)
@@ -59,12 +56,10 @@ def tuf_table_csv_to_df(fp) -> pd.DataFrame:
     return df
 
 
-
-
 def group_alarms_by(alarms: pd.DataFrame,
                     groupby_attrs: List[str] = None,
                     group_assign_attrs: List[str] = None
-                    ) -> Tuple[AlarmGroups, pd.DataFrame]:
+                    ) -> GroupedAlarms:
     if groupby_attrs is None: groupby_attrs = ['srid', 'target', 'depth', 'corners']
 
     alarms = alarms.copy(deep=True)
@@ -83,46 +78,54 @@ def group_alarms_by(alarms: pd.DataFrame,
 
     assert not alarms[groupby_attrs].isnull().values.any(), f'null values in table in groupby columns {groupby_attrs}'
 
-    gb = alarms.groupby(groupby_attrs, sort=False)
-    groups = list(gb)
+    groups = alarms.groupby(groupby_attrs, sort=False)
 
     if group_assign_attrs:
+        # pick out from groupby key only the attributes we want to  identify by
         groupids_dfidxs = []
         groupidx_attr_map = {attr: i for i, attr in enumerate(groupby_attrs)}
         for groupid_tuple, group in groups:
             groupid = tuple(
                 groupid_tuple[groupidx_attr_map[group_attr]] for group_attr in group_assign_attrs
             )
-            groupids_dfidxs.append((groupid, group.index))
+            groupids_dfidxs.append(GroupedAlarm(groupid, group.index))
     else:
-        groupids_dfidxs = [(groupid, group.index) for groupid, (_, group) in enumerate(groups)]
+        # else just use arbitrary groupid (i.e) position in enumerated list and ignore groupby key
+        groupids_dfidxs = [GroupedAlarm(groupid, group.index) for groupid, (_, group) in enumerate(groups)]
 
     dfidxs_groupids = []
     for groupid, dfidxs in groupids_dfidxs:
-        dfidxs_groupids.extend([(idx, groupid) for idx in dfidxs])
+        dfidxs_groupids.extend([GroupedAlarmIndex(idx, groupid) for idx in dfidxs])
 
-    assert len(alarms) == sum(map(len, map(itemgetter(1), groupids_dfidxs))), \
-        f'mismatched size {len(alarms), sum(map(len, map(itemgetter(1), groupids_dfidxs)))}'
+    # check that sum of quantity of grouped idxs equals all alarms
+    assert len(alarms) == sum(map(len, map(attrg('idxs'), groupids_dfidxs))), \
+        f'mismatched size {len(alarms), sum(map(len, map(attrg("idxs"), groupids_dfidxs)))}'
     assert len(alarms) == len(dfidxs_groupids), f'mismatched size {len(alarms), len(dfidxs_groupids)}'
-    assert all(map(itemgetter(0), dfidxs_groupids) == alarms.index)
+    # noinspection PyTypeChecker
+    # check that all alarm indices end up in some group
+    assert all(map(attrg('idx'), dfidxs_groupids) == alarms.index)
 
-    return (groupids_dfidxs, dfidxs_groupids), alarms
+    return GroupedAlarms(
+        groupids_dfidxs,
+        dfidxs_groupids,
+        alarms
+    )
 
 
 def create_cross_val_splits(n_splits: int,
                             cv: BaseCrossValidator,
                             alarms: pd.DataFrame,
-                            dfidxs_grpids: List[Tuple[int, AlarmGroupId]],
+                            dfidxs_grpids: List[GroupedAlarmIndex],
                             ) -> List[CrossValSplit]:
-    grp_szs = Counter(map(itemgetter(1), dfidxs_grpids))
+    grp_szs = Counter(map(attrg('group_id'), dfidxs_grpids))
 
-    train = [(df_idx, groupid) for df_idx, groupid in dfidxs_grpids if grp_szs[groupid] >= n_splits]
+    train = [GroupedAlarmIndex(idx, groupid) for idx, groupid in dfidxs_grpids if grp_szs[groupid] >= n_splits]
 
     if len(train) == 0:
         raise Exception(f'no groups with at least {n_splits} alarms: {grp_szs}')
     else:
-        train_xs = np.asarray(map(itemgetter(0), train))
-        train_groups = np.asarray(map(lambda e: '_'.join(map(str, e[1])), train))
+        train_xs = np.asarray(map(attrg('idx'), train))
+        train_groups = np.asarray(map(lambda e: '_'.join(map(str, e.group_id)), train))
         cv_iter = cv.split(
             X=train_xs,
             y=train_groups,
@@ -130,9 +133,9 @@ def create_cross_val_splits(n_splits: int,
         )
 
     # if number of instances/grouping is less than the number of folds then you can't distribute across the folds evenly
-    not_enough = [(df_idx, groupid) for df_idx, groupid in dfidxs_grpids if grp_szs[groupid] < n_splits]
+    not_enough = [grped_alarm_idx for grped_alarm_idx in dfidxs_grpids if grp_szs[grped_alarm_idx.group_id] < n_splits]
     if len(not_enough) > 0:
-        not_enough_xs = np.asarray(map(itemgetter(0), not_enough))
+        not_enough_xs = np.asarray(map(attrg('idx'), not_enough))
         if getattr(cv, 'shuffle', False): np.random.shuffle(not_enough_xs)
         len_t = len(train_xs)
         assert not set(train_xs) & set(not_enough_xs)
@@ -161,22 +164,18 @@ def create_cross_val_splits(n_splits: int,
         test_df = alarms.loc[test_dfidxs]
         test_df.index = test_df.index.map(int)
 
-        alarm_splits.append((train_df, test_df))
+        alarm_splits.append(CrossValSplit(train_df, test_df))
 
     return alarm_splits
 
 
-def group_false_alarms(all_false_alarms: pd.DataFrame) -> Tuple[AlarmGroups, pd.DataFrame]:
-    (falrmgrpids_dfidxs, _), grpdfalrmsdf = group_alarms_by(
-        all_false_alarms,
-        groupby_attrs=['srid', 'site'],
-        group_assign_attrs=['site']
-    )
+def group_false_alarms(all_false_alarms: pd.DataFrame) -> GroupedAlarms:
+    grouped_f_alarms = group_alarms_by(all_false_alarms, ['srid', 'site'], ['site'])
 
     grpids_dfidxs = []
     dfidxs_grpids = []
-    for groupid, dfidxs in falrmgrpids_dfidxs:
-        instance_rows_utms = grpdfalrmsdf.loc[dfidxs]['utm']
+    for groupid, dfidxs in grouped_f_alarms.grouped_alarms:
+        instance_rows_utms = grouped_f_alarms.df.loc[dfidxs]['utm']
         r_idx = r_index.Index()
         groupid = (f'{"_".join(groupid)}_miss',)
 
@@ -202,36 +201,35 @@ def group_false_alarms(all_false_alarms: pd.DataFrame) -> Tuple[AlarmGroups, pd.
                 near_dfidxs.append(list(ungrouped_idxs))
 
                 dfidxs_grpids.extend(
-                    [(dfidx, groupid) for dfidx in ungrouped_idxs]
+                    [GroupedAlarmIndex(dfidx, groupid) for dfidx in ungrouped_idxs]
                 )
 
                 near_utms = instance_rows_utms.loc[ungrouped_idxs].values
-                if DEBUG:
-                    logger.debug(
-                        f'convex hull area for {"_".join(groupid)}_miss: {MultiPoint(near_utms).convex_hull.area}'
-                    )
+                logger.debug(
+                    f'convex hull area for {"_".join(groupid)}_miss: {MultiPoint(near_utms).convex_hull.area}'
+                )
 
-        grpids_dfidxs.append((groupid, pd.Index(near_dfidxs)))
+        grpids_dfidxs.append(GroupedAlarm(groupid, pd.Index(near_dfidxs)))
 
-    assert len(all_false_alarms) == sum(map(lambda g: sum(map(len, g[1])), grpids_dfidxs)), \
-        f'mismatched size {len(all_false_alarms), sum(map(lambda g: sum(map(len, g[1])), grpids_dfidxs))}'
+    # check that sum of quantity of grouped idxs equals all alarms
+    assert len(all_false_alarms) == sum(map(len, map(attrg('idxs'), grpids_dfidxs))), \
+        f'mismatched size {len(all_false_alarms), sum(map(len, map(attrg("idxs"), grpids_dfidxs)))}'
     assert len(all_false_alarms) == len(dfidxs_grpids), \
         f'mismatched size {len(all_false_alarms), len(dfidxs_grpids)}'
+    # noinspection PyTypeChecker
+    # check that all alarm indices end up in some group
+    assert all(map(attrg('idx'), dfidxs_grpids) == all_false_alarms.index)
 
-    for groupid, dfidxs in grpids_dfidxs:
-        logger.info(f'group {groupid} # alarms {len(dfidxs)}')
-
-    return (grpids_dfidxs, dfidxs_grpids), grpdfalrmsdf
+    return GroupedAlarms(grpids_dfidxs, dfidxs_grpids, grouped_f_alarms.df)
 
 
 def join_cross_val_splits(cv_splits_1: List[CrossValSplit],
                           alarms_1: pd.DataFrame,
-                          dfidxs_groups_1: List[Tuple[int, AlarmGroupId]],
+                          dfidxs_groups_1: List[GroupedAlarmIndex],
                           cv_splits_2: List[CrossValSplit],
                           alarms_2: pd.DataFrame,
-                          dfidxs_groups_2: List[Tuple[int, AlarmGroupId]]
-                          ) -> Tuple[
-    List[CrossValSplit], pd.DataFrame, List[GroupedAlarms], List[Tuple[int, AlarmGroupId]]]:
+                          dfidxs_groups_2: List[GroupedAlarmIndex]
+                          ) -> Tuple[List[CrossValSplit], GroupedAlarms]:
     assert len(cv_splits_1) == len(cv_splits_2)
 
     concat_alrms = pd.concat(
@@ -243,8 +241,8 @@ def join_cross_val_splits(cv_splits_1: List[CrossValSplit],
     alrms_1_new_idx = concat_alrms.index.get_locs([['alarms_1'], alarms_1.index])
     alrms_2_new_idx = concat_alrms.index.get_locs([['alarms_2'], alarms_2.index])
 
-    dfidxs_grpids_1_map = dict(dfidxs_groups_1)
-    dfidxs_grpids_2_map = dict(dfidxs_groups_2)
+    dfidxs_grpids_1_map = {d.idx: d.group_id for d in dfidxs_groups_1}
+    dfidxs_grpids_2_map = {d.idx: d.group_id for d in dfidxs_groups_2}
 
     new_dfidxs_grpids = []
     new_grpids_dfidxs = defaultdict(lambda: pd.Index([]))
@@ -253,10 +251,11 @@ def join_cross_val_splits(cv_splits_1: List[CrossValSplit],
                                                            (alrms_2_new_idx, alarms_2.index, dfidxs_grpids_2_map)]:
         for new_idx, old_idx in zip(alrm_new_idx, alrm_old_idx):
             grp_id = dfidx_groupids_map[old_idx]
-            new_dfidxs_grpids.append((int(new_idx), grp_id))
+            new_dfidxs_grpids.append(GroupedAlarmIndex(int(new_idx), grp_id))
             new_grpids_dfidxs[grp_id] = new_grpids_dfidxs[grp_id].append(pd.Index([new_idx]))
 
     cv_splits = []
+    assert len(cv_splits_1) == len(cv_splits_2)
     for i in range(len(cv_splits_1)):
         train_1, test_1 = cv_splits_1[i]
         train_2, test_2 = cv_splits_2[i]
@@ -271,23 +270,19 @@ def join_cross_val_splits(cv_splits_1: List[CrossValSplit],
         train.index = pd.Index(np.concatenate([new_train_1_idx, new_train_2_idx]))
         test.index = pd.Index(np.concatenate([new_test_1_idx, new_test_2_idx]))
 
-        cv_splits.append((train, test))
+        cv_splits.append(CrossValSplit(train, test))
 
     return (
         cv_splits,
-        concat_alrms.reset_index(drop=True),
-        reduce(
-            operator.concat,
-            map(
-                lambda gid_dfidxs: [*itertools.product(['_'.join(map(str, gid_dfidxs[0]))], gid_dfidxs[1])],
-                new_grpids_dfidxs.items()
-            ),
-        ),
-        new_dfidxs_grpids
+        GroupedAlarms(
+            [GroupedAlarm(gid, idxs) for gid, idxs in new_grpids_dfidxs.items()],
+            new_dfidxs_grpids,
+            concat_alrms.reset_index(drop=True),
+        )
     )
 
 
-def split_t_f_alarms(all_alarms: pd.DataFrame):
+def split_t_f_alarms(all_alarms: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
     true_alarms = all_alarms[all_alarms['HIT'] == 1].copy(deep=True)
     true_alarms.reset_index(inplace=True, drop=True)
     false_alarms = all_alarms[all_alarms['HIT'] == 0].copy(deep=True)
@@ -296,67 +291,73 @@ def split_t_f_alarms(all_alarms: pd.DataFrame):
 
 
 def _splits(cv, alarms: pd.DataFrame, n_splits, attrs, group_attrs, separate_t_f=True) -> Tuple[
-    List[CrossValSplit], pd.DataFrame, List[GroupedAlarms], List[Tuple[int, AlarmGroupId]]
+    List[CrossValSplit], GroupedAlarms
 ]:
     if separate_t_f:
         t_alrms_df, f_alrms_df = split_t_f_alarms(alarms)
 
-        (t_alrm_grpids_dfidxs, t_alrm_dfidxs_grpids), grpd_t_alrms_df = group_alarms_by(t_alrms_df,
-                                                                                        groupby_attrs=attrs,
-                                                                                        group_assign_attrs=group_attrs
-                                                                                        )
-        (f_alrm_grpids_dfidxs, f_alrm_dfidxs_grpids), grpd_f_alrms_df = group_false_alarms(f_alrms_df)
+        grouped_t_alarms = group_alarms_by(
+            t_alrms_df,
+            groupby_attrs=attrs,
+            group_assign_attrs=group_attrs
+        )
+        grouped_f_alarms = group_false_alarms(f_alrms_df)
 
-        t_crs_val_splits = create_cross_val_splits(n_splits, cv, grpd_t_alrms_df, t_alrm_dfidxs_grpids)
-        f_crs_val_splits = create_cross_val_splits(n_splits, cv, grpd_f_alrms_df, f_alrm_dfidxs_grpids)
+        t_crs_val_splits = create_cross_val_splits(n_splits, cv, grouped_t_alarms.df, grouped_t_alarms.dfidxs_groupids)
+        f_crs_val_splits = create_cross_val_splits(n_splits, cv, grouped_f_alarms.df, grouped_f_alarms.dfidxs_groupids)
 
-        crs_val_splits, alarms, grids_dfidxs, dfidxs_grpids = join_cross_val_splits(
-            t_crs_val_splits, grpd_t_alrms_df, t_alrm_dfidxs_grpids,
-            f_crs_val_splits, grpd_f_alrms_df, f_alrm_dfidxs_grpids,
+        crs_val_splits, grouped_alarms = join_cross_val_splits(
+            t_crs_val_splits, grouped_t_alarms.df, grouped_t_alarms.dfidxs_groupids,
+            f_crs_val_splits, grouped_f_alarms.df, grouped_f_alarms.dfidxs_groupids,
         )
     else:
-        (grids_dfidxs, dfidxs_grpids), grpd_alrms_df = group_alarms_by(alarms,
-                                                                       groupby_attrs=attrs,
-                                                                       group_assign_attrs=group_attrs
-                                                                       )
-        crs_val_splits = create_cross_val_splits(n_splits, cv, grpd_alrms_df, dfidxs_grpids)
+        grouped_alarms = group_alarms_by(
+            alarms,
+            groupby_attrs=attrs,
+            group_assign_attrs=group_attrs
+        )
+        crs_val_splits = create_cross_val_splits(n_splits, cv, grouped_alarms.df, grouped_alarms.dfidxs_groupids)
 
-    return crs_val_splits, alarms, grids_dfidxs, dfidxs_grpids
+    return crs_val_splits, grouped_alarms
 
 
-def logo_region_splits(alarms: pd.DataFrame) -> Tuple[
-    List[CrossValSplit], pd.DataFrame, List[GroupedAlarms], List[Tuple[int, AlarmGroupId]]
-]:
+def logo_region_splits(alarms: pd.DataFrame) -> Tuple[List[CrossValSplit], GroupedAlarms]:
     cv = LeaveOneGroupOut()
     return _splits(cv, alarms, n_splits=10, attrs=['srid', 'site', 'lane'], group_attrs=['lane'],
                    separate_t_f=False)
 
 
-def kfold_stratified_target_splits(alarms: pd.DataFrame, n_splits=10) -> Tuple[
-    List[CrossValSplit], pd.DataFrame, List[GroupedAlarms], List[Tuple[int, AlarmGroupId]]
-]:
+def kfold_stratified_target_splits(alarms: pd.DataFrame, n_splits=10) -> Tuple[List[CrossValSplit], GroupedAlarms]:
     cv = StratifiedKFold(n_splits=n_splits)
     return _splits(cv, alarms, n_splits, attrs=['srid', 'target', 'depth', 'corners'], group_attrs=['target'])
 
 
-def vis_crossv_folds(cross_val_splits: List[CrossValSplit], dfs_groups: List[Tuple[int, AlarmGroupId]],
-                     alarms: pd.DataFrame, cv: str):
+def vis_crossv_folds(
+        cross_val_splits: List[CrossValSplit],
+        dfs_groups: List[Tuple[int, AlarmGroupId]],
+        alarms: pd.DataFrame,
+        cv: str
+):
     visualize_groups(dfs_groups, alarms, 'classes/groups')
     plot_cv_indices(cross_val_splits, dfs_groups, alarms, cv)
 
 
 def region_and_stratified(alarms: pd.DataFrame, n_splits_stratified):
-    rgn_splits, rgn_alarms, rgn_groups_dfs, rgn_dfs_groups = logo_region_splits(alarms)
+    rgn_splits, grouped_alarms = logo_region_splits(alarms)
     if DEBUG:
-        vis_crossv_folds(rgn_splits, rgn_dfs_groups, rgn_alarms, 'region logo fold')
+        vis_crossv_folds(rgn_splits, grouped_alarms.dfidxs_groupids, grouped_alarms.df, 'region logo fold')
 
     for i, (rgn_train, rgn_test) in enumerate(rgn_splits):
-        strat_splits, strat_alarms, strat_groups_dfs, strat_dfs_groups = kfold_stratified_target_splits(
+        strat_splits, strat_grouped_alarms = kfold_stratified_target_splits(
             rgn_train, n_splits_stratified
         )
         if DEBUG:
-            vis_crossv_folds(strat_splits, strat_dfs_groups, strat_alarms,
-                             f'strat {n_splits_stratified} folds region fold {i}')
+            vis_crossv_folds(
+                strat_splits,
+                strat_grouped_alarms.dfidxs_groupids,
+                strat_grouped_alarms.df,
+                f'strat {n_splits_stratified} folds region fold {i}'
+            )
         yield strat_splits, rgn_train, rgn_test
 
 

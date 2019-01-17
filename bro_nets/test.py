@@ -176,8 +176,7 @@ def prescreener_roc():
     prescreener_roc = roc_curve(test_alarms['HIT'], test_alarms['conf'])
     prescreener_auc = roc_auc_score(test_alarms['HIT'], test_alarms['conf'])
     plot_roc(
-        [
-            ('prescreener', prescreener_roc)],
+        [('prescreener', prescreener_roc)],
         [prescreener_auc],
         f'F1V4p4v3'
     )
