@@ -3,6 +3,7 @@ from itertools import product
 from operator import concat
 from typing import Union, Tuple, List, NamedTuple
 
+import attr
 import numpy as np
 import pandas as pd
 
@@ -19,19 +20,26 @@ class GroupedAlarmIndex(NamedTuple):
     group_id: AlarmGroupId
 
 
-class GroupedAlarms(NamedTuple):
+@attr.s(auto_attribs=True, frozen=True)
+class GroupedAlarms(object):
     grouped_alarms: List[GroupedAlarm]
     df: pd.DataFrame
 
-    @property
-    def idxs_groupids(self) -> List[GroupedAlarmIndex]:
-        return reduce(
+    def __attrs_post_init__(self):
+        self.__dict__['_idxs_groupids'] = reduce(
             concat,
             [
                 [GroupedAlarmIndex(idx, gid) for gid, idx in product([grouped_alarm.group_id], grouped_alarm.idxs)]
                 for grouped_alarm in self.grouped_alarms
             ]
         )
+
+    @property
+    def idxs_groupids(self) -> List[GroupedAlarmIndex]:
+        return self._idxs_groupids
+
+    def __iter__(self):
+        return iter([self.grouped_alarms, self.idxs_groupids, self.df])
 
 
 class CrossValSplit(NamedTuple):

@@ -41,39 +41,39 @@ class TestCrossVal(unittest.TestCase):
             cross_val.group_alarms_by(false_alarms)
 
         groupby_attrs = ['target', 'depth', 'corners']
-        grouped_alarms = cross_val.group_alarms_by(true_alarms, groupby_attrs=groupby_attrs,
-                                                   group_assign_attrs=groupby_attrs)
+        grouped_alarms, idxs_gids, df = cross_val.group_alarms_by(
+            true_alarms, groupby_attrs=groupby_attrs,
+            group_assign_attrs=groupby_attrs
+        )
 
-        self.assertEqual(len(true_alarms), len(grouped_alarms.df))
-        self.assertEqual(len(true_alarms), sum(map(len, map(attrg('idxs'), grouped_alarms.grouped_alarms))))
+        self.assertEqual(len(true_alarms), len(df))
+        self.assertEqual(len(true_alarms), sum(map(len, map(attrg('idxs'), grouped_alarms))))
 
-
-        dfidxs_gids = dict(grouped_alarms.idxs_groupids)
-        gids_dfidxs = dict(grouped_alarms.grouped_alarms)
-        for grouped_alarm in grouped_alarms.grouped_alarms:
-            self.assertEqual(set(map(tuple, grouped_alarms.df[groupby_attrs].loc[grouped_alarm.idxs].values)),
+        dfidxs_gids = dict(idxs_gids)
+        gids_dfidxs = dict(grouped_alarms)
+        for grouped_alarm in grouped_alarms:
+            self.assertEqual(set(map(tuple, df[groupby_attrs].loc[grouped_alarm.idxs].values)),
                              {grouped_alarm.group_id})
             for idx in grouped_alarm.idxs:
                 self.assertEqual(dfidxs_gids[idx], grouped_alarm.group_id)
 
-        for groupd_alarm_index in grouped_alarms.idxs_groupids:
-            self.assertEqual(tuple(grouped_alarms.df.loc[groupd_alarm_index.idx][groupby_attrs].values),
+        for groupd_alarm_index in idxs_gids:
+            self.assertEqual(tuple(df.loc[groupd_alarm_index.idx][groupby_attrs].values),
                              groupd_alarm_index.group_id)
             self.assertTrue(groupd_alarm_index.idx in gids_dfidxs[groupd_alarm_index.group_id])
 
     def test_group_false_alarms(self):
         alarms = cross_val.tuf_table_csv_to_df(self.csv_fp)
         _, false_alarms = cross_val.split_t_f_alarms(alarms)
-        grouped_false_alarms = cross_val.group_false_alarms(false_alarms)
+        grouped_alarms, idxs_gids, df = cross_val.group_false_alarms(false_alarms)
 
-        self.assertEqual(len(false_alarms), len(grouped_false_alarms.df))
-        self.assertEqual(len(false_alarms), sum(map(len, map(attrg('idxs'), grouped_false_alarms.grouped_alarms))))
+        self.assertEqual(len(false_alarms), len(df))
+        self.assertEqual(len(false_alarms), sum(map(len, map(attrg('idxs'), grouped_alarms))))
 
-        for f_alarm_grp in grouped_false_alarms.grouped_alarms:
+        for f_alarm_grp in grouped_alarms:
             for ix in f_alarm_grp.idxs:
                 for iy in f_alarm_grp.idxs:
                     self.assertLessEqual(
-                        np.linalg.norm(np.asarray(grouped_false_alarms.df.loc[ix]['utm']) - np.asarray(
-                            grouped_false_alarms.df.loc[iy]['utm'])),
+                        np.linalg.norm(np.asarray(df.loc[ix]['utm']) - np.asarray(df.loc[iy]['utm'])),
                         10 * np.sqrt(2)
                     )
