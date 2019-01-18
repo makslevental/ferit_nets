@@ -1,3 +1,6 @@
+from functools import reduce
+from itertools import product
+from operator import concat
 from typing import Union, Tuple, List, NamedTuple
 
 import numpy as np
@@ -18,8 +21,17 @@ class GroupedAlarmIndex(NamedTuple):
 
 class GroupedAlarms(NamedTuple):
     grouped_alarms: List[GroupedAlarm]
-    dfidxs_groupids: List[GroupedAlarmIndex]
     df: pd.DataFrame
+
+    @property
+    def idxs_groupids(self) -> List[GroupedAlarmIndex]:
+        return reduce(
+            concat,
+            [
+                [GroupedAlarmIndex(idx, gid) for gid, idx in product([grouped_alarm.group_id], grouped_alarm.idxs)]
+                for grouped_alarm in self.grouped_alarms
+            ]
+        )
 
 
 class CrossValSplit(NamedTuple):
