@@ -1,6 +1,5 @@
 from datetime import datetime
 from operator import itemgetter
-from typing import List
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -9,7 +8,7 @@ from matplotlib.colors import Normalize
 from matplotlib.patches import Patch, Rectangle
 from tensorboardX import SummaryWriter
 
-from bro_nets.test import ROC
+from tuf_torch import ROC
 
 mpl.rcParams['figure.dpi'] = 300
 
@@ -75,25 +74,23 @@ def visualize_groups(dfs_groups, alarms, title: str, lw=50, save=False):
     plt.close(fig)
 
 
-def plot_roc(rocs: List[ROC], aucs: List[float], title: str, save=True):
-    fig, ax = plt.subplots()
+def plot_roc(roc: ROC, auc: float, title: str, show=False):
+    fig = plt.figure()
+    ax = fig.add_axes([0.1, 0.1, 0.85, 0.8])
 
     lw = 2
-    for i, (name, roc) in enumerate(rocs):
-        fpr, tpr, _ = roc
-        ax.plot(fpr, tpr, lw=lw, label=f'{name} auc {aucs[i]:.3f}')
+    fpr, tpr, _ = roc
+    ax.plot(fpr, tpr, lw=lw, label=f'auc {auc:.3f}')
 
     ax.plot([0, 1], [0, 1], color='navy', lw=lw, linestyle='--')
     ax.set(xlabel='FPR', ylabel='TPR',
            ylim=[0.0, 1.05], xlim=[0.0, 1.0])
     ax.set_title(title, fontsize=15)
     ax.legend(loc="lower right")
-    plt.tight_layout()
-    if save:
-        plt.savefig(f'figs/{title}.png')
-    else:
-        plt.show()
-    plt.close(fig)
+    # fig.tight_layout()
+    if show:
+        fig.show()
+    return fig
 
 
 def plot_cv_indices(splits, dfs_groups, alarms, title, lw=10, save=False):
