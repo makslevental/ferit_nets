@@ -28,7 +28,10 @@ def test(net: torch.nn.Module, testloader: DataLoader) -> Tuple[
             confs = np.append(confs, conf)
 
     roc = roc_curve(all_labels, confs)
-    auc = roc_auc_score(all_labels, confs)
+    if len(set(all_labels)) > 1:
+        auc = roc_auc_score(all_labels, confs)
+    else:
+        auc = 0
     return roc, auc, all_labels, confs
 
 
