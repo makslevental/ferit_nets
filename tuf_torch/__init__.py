@@ -43,7 +43,7 @@ class GroupedAlarms(object):
 
 
 class CrossValSplit(NamedTuple):
-    nonholdout: pd.DataFrame
+    notholdout: pd.DataFrame
     holdout: pd.DataFrame
 
 
