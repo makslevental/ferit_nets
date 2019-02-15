@@ -1,30 +1,55 @@
-import os
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+from torch.nn.parallel import DataParallel
+from torch.autograd import Variable
+from torchvision import datasets, transforms
 
-import torch.distributed as dist
-from torch.multiprocessing import Process
-
-
-def run(rank, size):
-    """ Distributed function to be implemented later. """
-    print(rank, size)
-    pass
-
-
-def init_processes(rank, size, fn, backend='tcp'):
-    """ Initialize the distributed environment. """
-    os.environ['MASTER_ADDR'] = '127.0.0.1'
-    os.environ['MASTER_PORT'] = '29500'
-    dist.init_process_group(backend, rank=rank, world_size=size)
-    fn(rank, size)
+train_loader = torch.utils.data.DataLoader(
+    datasets.MNIST('./data', train=True, download=True,
+                   transform=transforms.Compose([
+                       transforms.ToTensor(),
+                       transforms.Normalize((0.1307,), (0.3081,))
+                   ])),
+    batch_size=256, shuffle=True, num_workers=2, pin_memory=True)
 
 
-if __name__ == "__main__":
-    size = 2
-    processes = []
-    for rank in range(size):
-        p = Process(target=init_processes, args=(rank, size, run))
-        p.start()
-        processes.append(p)
+class Net(nn.Module):
+    def __init__(self):
+        super(Net, self).__init__()
+        self.conv1 = nn.Conv2d(1, 10, kernel_size=5)
+        self.conv2 = nn.Conv2d(10, 20, kernel_size=5)
+        self.fc1 = nn.Linear(320, 50)
+        self.fc2 = nn.Linear(50, 10)
 
-    for p in processes:
-        p.join()
+    def forward(self, x):
+        x = F.relu(F.max_pool2d(self.conv1(x), 2))
+        x = F.relu(F.max_pool2d(self.conv2(x), 2))
+        x = x.view(-1, 320)
+        x = F.relu(self.fc1(x))
+        x = self.fc2(x)
+        return F.log_softmax(x)
+
+
+model = DataParallel(Net())
+model.cuda()
+
+optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
+criterion = nn.NLLLoss().cuda()
+
+model.train()
+for batch_idx, (data, target) in enumerate(train_loader):
+    input_var = Variable(data.cuda())
+    target_var = Variable(target.cuda())
+
+    print('Getting model output')
+    output = model(input_var)
+    print('Got model output')
+
+    loss = criterion(output, target_var)
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+
+print('Finished')

@@ -66,7 +66,7 @@ def visualize_groups(dfs_groups, alarms, title: str, lw=50, save=False):
 
     ax.set(ylim=[-1, 5], yticks=[.5, 3.5],
            yticklabels=['group', 'class'], xlabel="Sample index")
-    plt.tight_layout()
+    # plt.tight_layout()
     if save:
         plt.savefig(f'{fig_name}.png')
     else:
@@ -74,13 +74,18 @@ def visualize_groups(dfs_groups, alarms, title: str, lw=50, save=False):
     plt.close(fig)
 
 
-def plot_roc(roc: ROC, auc: float, title: str, show=False):
-    fig = plt.figure()
-    ax = fig.add_axes([0.1, 0.1, 0.85, 0.8])
+def plot_roc(roc: ROC, title: str, label:str, show=False, fig: plt.Figure=None):
+    if fig is None:
+        fig = plt.figure()
+        ax = fig.add_axes([0.1, 0.1, 0.85, 0.8])
+    else:
+        ax = fig.get_axes()
+        assert len(ax) == 1
+        ax = ax[0]
 
     lw = 2
     fpr, tpr, _ = roc
-    ax.plot(fpr, tpr, lw=lw, label=f'auc {auc:.3f}')
+    ax.plot(fpr, tpr, lw=lw, label=label)
 
     ax.plot([0, 1], [0, 1], color='navy', lw=lw, linestyle='--')
     ax.set(xlabel='FPR', ylabel='TPR',
@@ -152,7 +157,7 @@ def plot_cv_indices(splits, dfs_groups, alarms, title, lw=10, save=False):
         loc=(1.02, 0)
     )
     # Make the legend fit
-    plt.tight_layout()
+    # plt.tight_layout()
     if save:
         plt.savefig(f'{title}.png')
     else:
