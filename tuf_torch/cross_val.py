@@ -325,17 +325,17 @@ def region_and_stratified(alarms: pd.DataFrame, n_splits_stratified):
     if DEBUG:
         vis_crossv_folds(rgn_splits, grouped_alarms.idxs_groupids, grouped_alarms.df, 'region logo fold')
 
-    for i, (rgn_train, rgn_test) in enumerate(rgn_splits):
+    for rgn_train, rgn_test in rgn_splits:
         strat_splits, strat_grouped_alarms = kfold_stratified_target_splits(
             rgn_train, n_splits_stratified
         )
-        if DEBUG:
-            vis_crossv_folds(
-                strat_splits,
-                strat_grouped_alarms.idxs_groupids,
-                strat_grouped_alarms.df,
-                f'strat {n_splits_stratified} folds region fold {i}'
-            )
+        # if DEBUG:
+        #     vis_crossv_folds(
+        #         strat_splits,
+        #         strat_grouped_alarms.idxs_groupids,
+        #         strat_grouped_alarms.df,
+        #         f'strat {n_splits_stratified} folds region fold {i}'
+        #     )
         yield strat_splits, rgn_train, rgn_test
 
 
