@@ -1,4 +1,5 @@
 import os
+from typing import Iterable
 
 import numpy as np
 import torch
@@ -19,7 +20,7 @@ def train(
         optimizer: torch.optim.Optimizer,
         scheduler: torch.optim.lr_scheduler._LRScheduler,
         epochs=10,
-) -> torch.nn.Module:
+) -> Iterable[torch.nn.Module]:
     net.to(TORCH_DEVICE, dtype=torch.float)
 
     i = 0
@@ -43,10 +44,9 @@ def train(
                 raise Exception('gradients blew up')
             writer.add_scalar('Train/Loss', loss, i)
             writer.add_scalar('Train/LR', optimizer.param_groups[0]['lr'], i)
-
         scheduler.step()
+        yield net
 
-    return net
 
 
 if __name__ == '__main__':
