@@ -5,7 +5,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.nn import CrossEntropyLoss
 TORCH_DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 DEBUG = True
-PROJECT_ROOT = '/home/maksim/dev_projects/ferit_nets/'
+PROJECT_ROOT = '/home/maksim/ferit_nets/'
 DATA_ROOT = os.path.join(PROJECT_ROOT, 'data')
 BATCH_SIZE: int = 128
 SHUFFLE_DL = True

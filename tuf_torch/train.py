@@ -4,7 +4,8 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from tuf_torch.config import TORCH_DEVICE, DATA_ROOT, BATCH_SIZE, SHUFFLE_DL, EPOCHS, OPTIMIZER, SCHEDULER, CRITERION
+from tuf_torch.config import TORCH_DEVICE, DATA_ROOT, BATCH_SIZE, SHUFFLE_DL, EPOCHS, OPTIMIZER, SCHEDULER, CRITERION, \
+    PROJECT_ROOT
 from tuf_torch.cross_val import tuf_table_csv_to_df
 from tuf_torch.data import AlarmDataset
 from tuf_torch.models427 import GPR_15_300
@@ -49,9 +50,8 @@ def train(
 
 
 if __name__ == '__main__':
-    root = os.getcwd()
     tuf_table_file_name = 'small_maxs_table.csv'
-    all_alarms = tuf_table_csv_to_df(os.path.join(root, tuf_table_file_name))
+    all_alarms = tuf_table_csv_to_df(os.path.join(PROJECT_ROOT, tuf_table_file_name))
     ad = AlarmDataset(all_alarms, DATA_ROOT)
     adl = DataLoader(ad, BATCH_SIZE, SHUFFLE_DL)
     net = torch.nn.DataParallel(GPR_15_300())
