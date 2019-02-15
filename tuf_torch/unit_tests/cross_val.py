@@ -3,6 +3,7 @@ import unittest
 from operator import attrgetter as attrg
 
 import numpy as np
+from sklearn.model_selection import LeaveOneGroupOut
 
 from tuf_torch import cross_val
 from tuf_torch.config import PROJECT_ROOT
@@ -44,7 +45,6 @@ class TestCrossVal(unittest.TestCase):
         self.assertEqual(len(true_alarms), len(df))
         self.assertEqual(len(true_alarms), sum(map(len, map(attrg('idxs'), grouped_alarms))))
 
-
         for groupby_attrs in [['target'], ['target', 'depth', 'corners']]:
             grouped_alarms, idxs_gids, df = cross_val.group_alarms_by(
                 true_alarms, groupby_attrs=groupby_attrs,
@@ -82,3 +82,17 @@ class TestCrossVal(unittest.TestCase):
                         np.linalg.norm(np.asarray(df.loc[ix]['utm']) - np.asarray(df.loc[iy]['utm'])),
                         10 * np.sqrt(2)
                     )
+
+    def test_create_cross_val_split(self):
+        cv = LeaveOneGroupOut()
+        alarms = cross_val.tuf_table_csv_to_df(self.csv_fp)
+        true_alarms, false_alarms = cross_val.split_t_f_alarms(alarms)
+        grouped_t_alarms = cross_val.group_alarms_by(true_alarms, group_assign_attrs=['target', 'depth', 'corners'])
+        crossval_splits = cross_val.create_cross_val_splits(3, cv, grouped_t_alarms.df, grouped_t_alarms.idxs_groupids)
+        for nonholdout, holdout in crossval_splits:
+            self.assertFalse(set(nonholdout.index) & set(holdout.index))
+            self.assertEqual(set(nonholdout.index) | set(holdout.index), set(range(len(grouped_t_alarms.df))))
+
+
+if __name__ == '__main__':
+    unittest.main()
