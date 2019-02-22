@@ -74,7 +74,7 @@ def visualize_groups(dfs_groups, alarms, title: str, lw=50, save=False):
     plt.close(fig)
 
 
-def plot_roc(roc: ROC, title: str, label:str, show=False, fig: plt.Figure=None):
+def plot_roc(roc: ROC, title: str, label: str, show=False, save=False, fig: plt.Figure = None):
     if fig is None:
         fig = plt.figure()
         ax = fig.add_axes([0.1, 0.1, 0.85, 0.8])
@@ -95,6 +95,8 @@ def plot_roc(roc: ROC, title: str, label:str, show=False, fig: plt.Figure=None):
     # fig.tight_layout()
     if show:
         fig.show()
+    if save:
+        fig.savefig(f'figs/{title}_{label}.png')
     return fig
 
 

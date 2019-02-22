@@ -114,3 +114,9 @@ data
 *.profile
 HowTo
 .pyre
+
+
+nets
+logs
+folds
+figs

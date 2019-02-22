@@ -5,10 +5,9 @@ import h5py
 import pandas as pd
 import torch
 import torch.serialization
-from torch.utils.data import Dataset, DataLoader
-from torchvision import transforms
+from torch.utils.data import Dataset
 
-from tuf_torch.config import DEBUG, DATA_ROOT, PROJECT_ROOT, BATCH_SIZE, SHUFFLE_DL
+from tuf_torch.config import DATA_ROOT, PROJECT_ROOT
 from tuf_torch.cross_val import tuf_table_csv_to_df
 
 
@@ -72,25 +71,19 @@ class AlarmDataset(Dataset):
         return feature, hit
 
 
-
-
 if __name__ == '__main__':
-    tuf_table_file_name = 'small_maxs_table.csv'
+    tuf_table_file_name = 'all_maxs.csv'
     # tuf_table_file_name = 'all_maxs.csv'
     all_alarms = tuf_table_csv_to_df(os.path.join(PROJECT_ROOT, tuf_table_file_name))
-    m1, s1 = torch.serialization.load(os.path.join(PROJECT_ROOT, 'means.pt')), \
-             torch.serialization.load(os.path.join(PROJECT_ROOT, 'stds.pt'))
+    # m1, s1 = torch.serialization.load(os.path.join(PROJECT_ROOT, 'means.pt')), \
+    #          torch.serialization.load(os.path.join(PROJECT_ROOT, 'stds.pt'))
 
     ad = AlarmDataset(
         all_alarms,
         DATA_ROOT,
-        transform=transforms.Compose([Normalize(m1, s1)])
+        # transform=transforms.Compose([Normalize(m1, s1)])
     )
 
-    if DEBUG:
-        # https://intellij-support.jetbrains.com/hc/en-us/community/posts/360000066410-pydev-debugger-performing-a-KeyboardInterrupt-while-debugging-program-Error-in-atexit-run-exitfuncs-
-        # error pops up in os.fork (or something like that) so don't use multiple workers to avoid
-        adl = DataLoader(ad, BATCH_SIZE, SHUFFLE_DL)
-    else:
-        adl = DataLoader(ad, BATCH_SIZE, SHUFFLE_DL, num_workers=4)
-    print(ad[1:10])
+    m1, s1 = compute_normalization_online(ad)
+    torch.serialization.save(m1, os.path.join(PROJECT_ROOT, 'means.pt'))
+    torch.serialization.save(s1, os.path.join(PROJECT_ROOT, 'stds.pt'))

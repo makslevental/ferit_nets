@@ -2,8 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torch.nn.parallel import DataParallel
 from torch.autograd import Variable
+from torch.nn.parallel import DataParallel
 from torchvision import datasets, transforms
 
 train_loader = torch.utils.data.DataLoader(

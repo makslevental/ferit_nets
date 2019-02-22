@@ -5,11 +5,12 @@ from typing import Tuple
 import numpy as np
 import torch
 import torch.nn.functional as torch_f
+from sklearn.metrics import roc_curve, roc_auc_score
+from torch.utils.data import DataLoader
+
 from tuf_torch.config import TORCH_DEVICE
 from tuf_torch.cross_val import tuf_table_csv_to_df
 from tuf_torch.visualization import plot_roc
-from sklearn.metrics import roc_curve, roc_auc_score
-from torch.utils.data import DataLoader
 
 ROC = Tuple[np.ndarray, np.ndarray, np.ndarray]
 

@@ -48,7 +48,6 @@ def train(
         yield net
 
 
-
 if __name__ == '__main__':
     tuf_table_file_name = 'small_maxs_table.csv'
     all_alarms = tuf_table_csv_to_df(os.path.join(PROJECT_ROOT, tuf_table_file_name))
