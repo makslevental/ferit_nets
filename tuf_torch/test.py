@@ -15,25 +15,27 @@ from tuf_torch.visualization import plot_roc
 ROC = Tuple[np.ndarray, np.ndarray, np.ndarray]
 
 
-def test(net: torch.nn.Module, testloader: DataLoader) -> Tuple[
-    ROC, float, np.ndarray, np.ndarray
+def test(net: torch.nn.Module, testloader: DataLoader, criterion) -> Tuple[
+    ROC, float, np.ndarray, np.ndarray, float
 ]:
     all_labels = np.array([])
     confs = np.array([])
+    loss = 0
     with torch.no_grad():
         for inputs, labels in testloader:
             inputs, labels = inputs.to(TORCH_DEVICE, dtype=torch.float), labels.to(TORCH_DEVICE, dtype=torch.long)
             outputs = net(inputs)
+            loss += criterion(outputs, labels)
             conf = torch_f.softmax(outputs, dim=1)[:, 1]
-            all_labels = np.append(all_labels, labels)
-            confs = np.append(confs, conf)
+            all_labels = np.append(all_labels, labels.cpu())
+            confs = np.append(confs, conf.cpu())
 
     roc = roc_curve(all_labels, confs)
     if len(set(all_labels)) > 1:
         auc = roc_auc_score(all_labels, confs)
     else:
         auc = 0
-    return roc, auc, all_labels, confs
+    return roc, auc, all_labels, confs, loss
 
 
 # def test_fold_0():

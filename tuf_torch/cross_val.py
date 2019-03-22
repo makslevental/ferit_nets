@@ -22,7 +22,7 @@ logger = logging.Logger(__name__)
 
 
 def tuf_table_csv_to_df(fp: str) -> pd.DataFrame:
-    df = pd.read_csv(fp, delimiter=r"\s*,", engine='python')
+    df = pd.read_csv(fp, delimiter=r"\s*,\s*", engine='python')
 
     df = df.where(~df.isna(), None)
 

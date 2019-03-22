@@ -45,7 +45,7 @@ def train(
             writer.add_scalar('Train/Loss', loss, i)
             writer.add_scalar('Train/LR', optimizer.param_groups[0]['lr'], i)
         scheduler.step()
-        yield net
+        yield net, loss.item()
 
 
 if __name__ == '__main__':

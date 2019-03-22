@@ -6,6 +6,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
+from tuf_torch.config import TORCH_DEVICE
+
 
 def compress_layers(net):
     items = list(net.items())
@@ -168,6 +170,26 @@ class GPR300(nn.Module):
         x = F.relu(self.fc4(x))
         x = self.fc5(x)
         return x
+
+
+class AucLoss(torch.nn.Module):
+
+    def __init__(self, gamma=0.5):
+        super(AucLoss, self).__init__()
+        self.gamma = gamma
+
+    def forward(self, outputs, labels):
+        outputs = F.softmax(outputs, dim=1)[:, 1]
+        pos = outputs[labels == 1]
+        neg = outputs[labels == 0]
+
+        pos1 = pos.unsqueeze(0).transpose(0, 1).repeat(1, len(neg))
+        neg1 = neg.repeat(len(pos), 1)
+        gamma = torch.ones((2,), dtype=torch.float, device=TORCH_DEVICE).new_full(pos1.shape, self.gamma)
+
+        R = pos1 - neg1 - gamma
+        RR = R[R < 0]
+        return torch.sum(RR ** 2)
 
 
 class Feat128(nn.Module):

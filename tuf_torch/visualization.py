@@ -165,3 +165,24 @@ def plot_cv_indices(splits, dfs_groups, alarms, title, lw=10, save=False):
     else:
         plt.show()
     plt.close(fig)
+
+
+def plot_auc_loss(log_df, title):
+    fig, ax1 = plt.subplots()
+    fig.suptitle(title, fontsize=16)
+    color = 'tab:red'
+    ax1.set_xlabel('epoch')
+    ax1.set_ylabel('auc', color=color)
+    ax1.plot(log_df['strat_auc'].values, color=color)
+    ax1.tick_params(axis='y', labelcolor=color)
+
+    ax2 = ax1.twinx()  # instantiate a second axes that shares the same x-axis
+
+    color = 'tab:blue'
+    ax2.set_ylabel('loss', color=color)  # we already handled the x-label with ax1
+    ax2.plot(log_df['strat_loss'].values, color=color)
+    ax2.tick_params(axis='y', labelcolor=color)
+
+    fig.tight_layout(rect=[0, 0.03, 1, 0.90])  # otherwise the right y-label is slightly clipped
+    fig.subplots_adjust(top=0.9)
+    return fig
