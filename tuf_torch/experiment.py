@@ -1,3 +1,4 @@
+import multiprocessing
 import os
 from operator import itemgetter
 
@@ -24,7 +25,7 @@ from tuf_torch.config import (
 from tuf_torch.cross_val import tuf_table_csv_to_df, region_and_stratified
 from tuf_torch.data import AlarmDataset, Normalize, load_nets_dir
 from tuf_torch.models427 import GPR_15_300, AucLoss
-from tuf_torch.test import test
+from tuf_torch.test import test, test_ensemble
 from tuf_torch.train import train
 from tuf_torch.visualization import plot_roc, plot_auc_loss
 
@@ -464,11 +465,17 @@ def exp6():
 
 
 def exp7():
-    tuf_table_file_name = 'big_maxs_table.csv'
+    tuf_table_file_name = 'all_maxs.csv'
     all_alarms = tuf_table_csv_to_df(os.path.join(PROJECT_ROOT, "csvs", tuf_table_file_name))
     m1, s1 = torch.serialization.load(os.path.join(PROJECT_ROOT, 'means.pt')), \
              torch.serialization.load(os.path.join(PROJECT_ROOT, 'stds.pt'))
     nets = defaultlist(lambda: defaultlist(lambda: torch.nn.DataParallel(GPR_15_300())))
+    log_path = os.path.join(LOGS_PATH, "loss.csv")
+    log_csv = open(log_path, "w")
+    log_csv.write("region, strat, epoch, strat_auc, strat_loss\n")
+    epochs = 50
+    criterion = AucLoss()
+    strat_aucs = [0, 0, 0]
     for i, (strat_splits, _rgn_train, rgn_holdout) in enumerate(
             region_and_stratified(all_alarms, n_splits_stratified=N_STRAT_SPLITS)):
         # main training loop
@@ -480,21 +487,58 @@ def exp7():
                 transform=transforms.Compose([Normalize(m1, s1)])
             )
             strat_train_adl = DataLoader(strat_train_ad, BATCH_SIZE, SHUFFLE_DL, num_workers=16)
+            strat_holdout_ad = AlarmDataset(
+                alarm_strat_holdout,
+                DATA_ROOT,
+                transform=transforms.Compose([Normalize(m1, s1)])
+            )
+            strat_holdout_adl = DataLoader(strat_holdout_ad,
+                                           BATCH_SIZE,
+                                           shuffle=True,
+                                           num_workers=4)
             optim = OPTIMIZER(net)
             sched = SCHEDULER(optim, strat_train_adl)
             for k, (_, loss) in enumerate(train(
                     net,
                     strat_train_adl,
-                    criterion=AucLoss(),
+                    criterion=criterion,
                     optimizer=optim,
                     scheduler=sched,
-                    epochs=EPOCHS
+                    epochs=epochs
             )):
-                print(i, j, k, loss)
+                if k % 5 == 0:
+                    _roc, strat_auc, _all_labels, strat_confs, strat_loss = test(net, strat_holdout_adl, criterion)
+                    log_csv.write(
+                        f"{i}, {j}, {k}, {strat_auc}, {strat_loss}\n")
+                    log_csv.flush()
+                    print(
+                        f"{i}, {j}, {k}, {strat_auc}, {strat_loss}\n")
+                    strat_aucs[k % 3] = strat_auc
+                    if np.abs(np.mean(strat_aucs) - 0.5) < 0.0000001 or np.abs(np.mean(strat_aucs) - 0.5) < 0.00000001:
+                        print(f"!!!! diverged")
+                        nets[i][j] = torch.nn.DataParallel(GPR_15_300())
 
     for i, sub_nets in enumerate(nets):
         for j, net in enumerate(sub_nets):
-            torch.save(net.state_dict(), os.path.join(NETS_PATH, f"net_test_{i}_{j}.net"))
+            torch.save(net.state_dict(), os.path.join(NETS_PATH, f"net_{i}_{j}.net"))
+
+
+def exp8():
+    m1, s1 = torch.serialization.load(os.path.join(PROJECT_ROOT, 'means.pt')), \
+             torch.serialization.load(os.path.join(PROJECT_ROOT, 'stds.pt'))
+
+    australia_alarms = tuf_table_csv_to_df(os.path.join(PROJECT_ROOT, "csvs", "australia.csv"))
+    australia_ad = AlarmDataset(
+        australia_alarms,
+        DATA_ROOT,
+        transform=transforms.Compose([Normalize(m1, s1)])
+    )
+    australia_adl = DataLoader(australia_ad, BATCH_SIZE, shuffle=False, num_workers=multiprocessing.cpu_count())
+    nets = load_nets_dir("/home/maksim/dev_projects/ferit_nets/nets/2019-03-22_curious", "GPR_15_300")
+    for n in nets:
+        n.cuda()
+    ensemble_test = test_ensemble(nets, australia_adl, CRITERION, lambda cs: gmean(cs, axis=0))
+    plot_roc(ensemble_test.fused_roc)
 
 
 if __name__ == "__main__":

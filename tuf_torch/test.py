@@ -1,4 +1,3 @@
-import ast
 import os
 from typing import Tuple
 
@@ -8,9 +7,8 @@ import torch.nn.functional as torch_f
 from sklearn.metrics import roc_curve, roc_auc_score
 from torch.utils.data import DataLoader
 
+from tuf_torch import EnsembleTest
 from tuf_torch.config import TORCH_DEVICE
-from tuf_torch.cross_val import tuf_table_csv_to_df
-from tuf_torch.visualization import plot_roc
 
 ROC = Tuple[np.ndarray, np.ndarray, np.ndarray]
 
@@ -36,6 +34,29 @@ def test(net: torch.nn.Module, testloader: DataLoader, criterion) -> Tuple[
     else:
         auc = 0
     return roc, auc, all_labels, confs, loss
+
+
+def test_ensemble(nets, data_loader, criterion, fusion_fn):
+    for j, net in enumerate(nets):
+        roc, auc, labels, confs, loss = test(net, data_loader, criterion)
+        all_aucs = all_aucs + [auc] if j > 0 else [auc]
+        all_rocs = all_rocs + [roc] if j > 0 else [roc]
+        all_losses = all_losses + [loss] if j > 0 else [loss]
+        all_confs = np.vstack((all_confs, confs)) if j > 0 else confs
+        if j == 0:
+            all_labels = labels
+        else:
+            assert np.array_equal(all_labels, labels)
+
+        print(f"done testing {j}")
+
+    fused_confs = fusion_fn(all_confs)
+    fused_roc = roc_curve(all_labels, fused_confs)
+    if len(set(all_labels)) > 1:
+        fused_auc = roc_auc_score(all_labels, fused_confs)
+    else:
+        fused_auc = 'NaN'
+    return EnsembleTest(all_rocs, all_confs, fused_auc, fused_confs, fused_roc)
 
 
 # def test_fold_0():
@@ -174,19 +195,19 @@ def test(net: torch.nn.Module, testloader: DataLoader, criterion) -> Tuple[
 #     return netrocs_netaucs_labelsconfs, prescreener_roc, prescreener_auc
 
 
-def prescreener_roc():
-    root = '/home/maksim/dev_projects/ferit_nets'
-    tuf_table_file_name = 'fold_0_test.csv'
-    test_alarms = tuf_table_csv_to_df(os.path.join(root, 'folds', tuf_table_file_name))
-    test_alarms['utm'] = test_alarms['utm'].map(ast.literal_eval)
-    prescreener_roc = roc_curve(test_alarms['HIT'], test_alarms['conf'])
-    prescreener_auc = roc_auc_score(test_alarms['HIT'], test_alarms['conf'])
-    plot_roc(
-        [
-            ('prescreener', prescreener_roc)],
-        [prescreener_auc],
-        f'F1V4p4v3'
-    )
+# def prescreener_roc():
+#     root = '/home/maksim/dev_projects/ferit_nets'
+#     tuf_table_file_name = 'fold_0_test.csv'
+#     test_alarms = tuf_table_csv_to_df(os.path.join(root, 'folds', tuf_table_file_name))
+#     test_alarms['utm'] = test_alarms['utm'].map(ast.literal_eval)
+#     prescreener_roc = roc_curve(test_alarms['HIT'], test_alarms['conf'])
+#     prescreener_auc = roc_auc_score(test_alarms['HIT'], test_alarms['conf'])
+#     plot_roc(
+#         [
+#             ('prescreener', prescreener_roc)],
+#         [prescreener_auc],
+#         f'F1V4p4v3'
+#     )
 
 
 # def test_with_cross_val(alarms):

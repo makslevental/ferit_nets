@@ -48,3 +48,11 @@ class CrossValSplit(NamedTuple):
 
 
 ROC = Tuple[np.ndarray, np.ndarray, np.ndarray]
+
+
+class EnsembleTest(NamedTuple):
+    rocs: List[ROC]
+    confs: np.ndarray
+    fused_auc: float
+    fused_confs: List[float]
+    fused_roc: ROC
