@@ -1,5 +1,6 @@
 import multiprocessing
 import os
+import pickle
 from operator import itemgetter
 
 import matplotlib.pyplot as plt
@@ -474,10 +475,11 @@ def exp7():
     log_csv = open(log_path, "w")
     log_csv.write("region, strat, epoch, strat_auc, strat_loss\n")
     epochs = 50
-    criterion = AucLoss()
+    criterion = CRITERION
     strat_aucs = [0, 0, 0]
     for i, (strat_splits, _rgn_train, rgn_holdout) in enumerate(
             region_and_stratified(all_alarms, n_splits_stratified=N_STRAT_SPLITS)):
+        print(rgn_holdout[['site', 'lane']].drop_duplicates())
         # main training loop
         for j, (alarm_strat_train, alarm_strat_holdout) in enumerate(strat_splits):
             net = nets[i][j]
@@ -486,7 +488,7 @@ def exp7():
                 DATA_ROOT,
                 transform=transforms.Compose([Normalize(m1, s1)])
             )
-            strat_train_adl = DataLoader(strat_train_ad, BATCH_SIZE, SHUFFLE_DL, num_workers=16)
+            strat_train_adl = DataLoader(strat_train_ad, BATCH_SIZE, shuffle=True, num_workers=16)
             strat_holdout_ad = AlarmDataset(
                 alarm_strat_holdout,
                 DATA_ROOT,
@@ -523,23 +525,103 @@ def exp7():
             torch.save(net.state_dict(), os.path.join(NETS_PATH, f"net_{i}_{j}.net"))
 
 
-def exp8():
+def exp8(exp_dir, criterion):
     m1, s1 = torch.serialization.load(os.path.join(PROJECT_ROOT, 'means.pt')), \
              torch.serialization.load(os.path.join(PROJECT_ROOT, 'stds.pt'))
 
-    australia_alarms = tuf_table_csv_to_df(os.path.join(PROJECT_ROOT, "csvs", "australia.csv"))
+    australia_alarms = tuf_table_csv_to_df(os.path.join(PROJECT_ROOT, "csvs", "all_australia.csv"))
     australia_ad = AlarmDataset(
         australia_alarms,
         DATA_ROOT,
         transform=transforms.Compose([Normalize(m1, s1)])
     )
     australia_adl = DataLoader(australia_ad, BATCH_SIZE, shuffle=False, num_workers=multiprocessing.cpu_count())
-    nets = load_nets_dir("/home/maksim/dev_projects/ferit_nets/nets/2019-03-22_curious", "GPR_15_300")
-    for n in nets:
+    nets = load_nets_dir(os.path.join(exp_dir, "nets"), "GPR_15_300")
+    for i, n in enumerate(nets):
+        print("loading net ", i)
         n.cuda()
-    ensemble_test = test_ensemble(nets, australia_adl, CRITERION, lambda cs: gmean(cs, axis=0))
-    plot_roc(ensemble_test.fused_roc)
+    ensemble_test = test_ensemble(nets, australia_adl, criterion, lambda cs: gmean(cs, axis=0))
+    pickle.dump(ensemble_test, open(
+        os.path.join(exp_dir, f"ensemble_aus_test.pkl"),
+        "wb"))
 
+
+def exp9():
+    tuf_table_file_name = 'all_maxs.csv'
+    exp_dir = "/home/maksim/dev_projects/ferit_nets/experiments/2019-03-23_train_all_50_epochs_aucloss"
+    all_alarms = tuf_table_csv_to_df(os.path.join(PROJECT_ROOT, "csvs", tuf_table_file_name))
+    m1, s1 = torch.serialization.load(os.path.join(PROJECT_ROOT, 'means.pt')), \
+             torch.serialization.load(os.path.join(PROJECT_ROOT, 'stds.pt'))
+
+    for i, n in enumerate(nets):
+        print("loading net ", i)
+        n.cuda()
+    criterion = AucLoss()
+
+    for i, (_strat_splits, _rgn_train, rgn_holdout) in enumerate(
+            region_and_stratified(all_alarms, n_splits_stratified=N_STRAT_SPLITS)):
+        region_holdout_ad = AlarmDataset(
+            rgn_holdout,
+            DATA_ROOT,
+            transform=transforms.Compose([Normalize(m1, s1)])
+        )
+        region_holdout_adl = DataLoader(region_holdout_ad, BATCH_SIZE, shuffle=False,
+                                        num_workers=multiprocessing.cpu_count())
+        print(f"testing region {i}")
+        try:
+            ensemble_test = test_ensemble(nets[i * 10:(i + 1) * 10], region_holdout_adl, criterion,
+                                          lambda cs: gmean(cs, axis=0))
+            pickle.dump(ensemble_test, open(
+                os.path.join(exp_dir, f"ensemble_{i}_test.pkl"),
+                "wb"))
+        except Exception as e:
+            print(e)
+
+def exp10():
+    tuf_table_file_name = 'all_maxs.csv'
+    exp_dir = "/home/maksim/dev_projects/ferit_nets/experiments/2019-03-27_train_all_50_epochs_crossentropy_loss"
+    all_alarms = tuf_table_csv_to_df(os.path.join(PROJECT_ROOT, "csvs", tuf_table_file_name))
+    m1, s1 = torch.serialization.load(os.path.join(PROJECT_ROOT, 'means.pt')), \
+             torch.serialization.load(os.path.join(PROJECT_ROOT, 'stds.pt'))
+
+    nets = load_nets_dir(os.path.join(exp_dir, "nets"), "GPR_15_300")
+    for i, n in enumerate(nets):
+        print("loading net ", i)
+        n.cuda()
+    criterion = CRITERION
+
+    for i, (_strat_splits, _rgn_train, rgn_holdout) in enumerate(
+            region_and_stratified(all_alarms, n_splits_stratified=N_STRAT_SPLITS)):
+        region_holdout_ad = AlarmDataset(
+            rgn_holdout,
+            DATA_ROOT,
+            transform=transforms.Compose([Normalize(m1, s1)])
+        )
+        region_holdout_adl = DataLoader(region_holdout_ad, BATCH_SIZE, shuffle=False,
+                                        num_workers=multiprocessing.cpu_count())
+        print(f"testing region {i}")
+        try:
+            ensemble_test = test_ensemble(nets[i * 10:(i + 1) * 10], region_holdout_adl, criterion,
+                                          lambda cs: gmean(cs, axis=0))
+            pickle.dump(ensemble_test, open(
+                os.path.join(exp_dir, f"ensemble_{i}_test.pkl"),
+                "wb"))
+        except Exception as e:
+            print(e)
+
+def exp11():
+    tuf_table_file_name = 'all_maxs.csv'
+    all_alarms = tuf_table_csv_to_df(os.path.join(PROJECT_ROOT, "csvs", tuf_table_file_name))
+    df = pd.DataFrame()
+    for i, (_strat_splits, _rgn_train, rgn_holdout) in enumerate(
+            region_and_stratified(all_alarms, n_splits_stratified=N_STRAT_SPLITS)):
+        print(i)
+        df = df.append(rgn_holdout)
+
+    df.to_csv(os.path.join(PROJECT_ROOT, "csvs", "regions.csv"))
 
 if __name__ == "__main__":
-    exp7()
+    exp_dir = "/home/maksim/dev_projects/ferit_nets/experiments/2019-03-23_train_all_50_epochs_aucloss"
+    exp8(exp_dir, AucLoss())
+    exp_dir = "/home/maksim/dev_projects/ferit_nets/experiments/2019-03-27_train_all_50_epochs_crossentropy_loss"
+    exp8(exp_dir, CRITERION)

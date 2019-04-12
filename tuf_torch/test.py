@@ -38,6 +38,7 @@ def test(net: torch.nn.Module, testloader: DataLoader, criterion) -> Tuple[
 
 def test_ensemble(nets, data_loader, criterion, fusion_fn):
     for j, net in enumerate(nets):
+        print("testing net ", j)
         roc, auc, labels, confs, loss = test(net, data_loader, criterion)
         all_aucs = all_aucs + [auc] if j > 0 else [auc]
         all_rocs = all_rocs + [roc] if j > 0 else [roc]
@@ -56,7 +57,7 @@ def test_ensemble(nets, data_loader, criterion, fusion_fn):
         fused_auc = roc_auc_score(all_labels, fused_confs)
     else:
         fused_auc = 'NaN'
-    return EnsembleTest(all_rocs, all_confs, fused_auc, fused_confs, fused_roc)
+    return EnsembleTest(all_rocs, all_confs, fused_auc, fused_confs, fused_roc, all_labels)
 
 
 # def test_fold_0():

@@ -27,23 +27,27 @@ PROJECT_NAME = random.choice(WORDS)
 
 word_file = "/usr/share/dict/words"
 WORDS = open(word_file).read().splitlines()
+try:
+    application_window = tk.Tk()
+    application_window.withdraw()
+    
+    PROJECT_NAME = simpledialog.askstring("Project name", "",
+                                          parent=application_window, initialvalue=PROJECT_NAME)
+except tk.TclError:
+    PROJECT_NAME = input("Project name: ")
 
-application_window = tk.Tk()
-application_window.withdraw()
-PROJECT_NAME = simpledialog.askstring("Project name", "",
-                                      parent=application_window, initialvalue=PROJECT_NAME)
-if PROJECT_NAME is not None:
+if PROJECT_NAME:
     project_path = f"{datetime.date.today()}_{PROJECT_NAME}"
     print(f"project path: {project_path}")
-    NETS_PATH = os.path.join(PROJECT_ROOT, "nets", project_path)
-    FIGS_PATH = os.path.join(PROJECT_ROOT, "figs", project_path)
-    LOGS_PATH = os.path.join(PROJECT_ROOT, "logs", project_path)
-else:
-    raise Exception("no project name")
+    NETS_PATH = os.path.join(PROJECT_ROOT, "experiments", project_path, "nets")
+    FIGS_PATH = os.path.join(PROJECT_ROOT, "experiments", project_path, "figs")
+    LOGS_PATH = os.path.join(PROJECT_ROOT, "experiments", project_path, "logs")
 
-if not os.path.exists(NETS_PATH):
-    os.makedirs(NETS_PATH)
-if not os.path.exists(FIGS_PATH):
-    os.makedirs(FIGS_PATH)
-if not os.path.exists(LOGS_PATH):
-    os.makedirs(LOGS_PATH)
+    if not os.path.exists(NETS_PATH):
+        os.makedirs(NETS_PATH)
+    if not os.path.exists(FIGS_PATH):
+        os.makedirs(FIGS_PATH)
+    if not os.path.exists(LOGS_PATH):
+        os.makedirs(LOGS_PATH)
+else:
+    NETS_PATH = LOGS_PATH = FIGS_PATH = "/tmp/"

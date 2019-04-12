@@ -56,3 +56,4 @@ class EnsembleTest(NamedTuple):
     fused_auc: float
     fused_confs: List[float]
     fused_roc: ROC
+    all_labels: np.ndarray
